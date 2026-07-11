@@ -36,16 +36,15 @@ function injectBridge(directory) {
 }
 injectBridge(extension);
 
-// WebKit does not support CSS content:url() image replacement on <img> elements
-// (it works in Chrome), which the popup uses for its themed empty-state and 2FA
-// provider illustrations. Append equivalent background-image rules.
-const cssFixMarker = "/* safari-legacy content:url() fix */";
+// Legacy-runtime UI fixes. The extension-page bridge assigns real img srcs for the
+// illustrations that the stock CSS supplies via content:url() (unsupported on <img>
+// in WebKit); neutralize those rules so they cannot fight the srcs. The popout
+// button is hidden because legacy Safari cannot load extension pages in tabs.
+const cssFixMarker = "/* safari-legacy ui fixes */";
 const cssFix = [
   cssFixMarker,
-  ".no-items .no-items-image,.full-loading-spinner .no-items-image{content:none!important;background:transparent no-repeat center/contain;background-image:url(images/search-desktop-light.svg);width:120px;height:120px}",
-  "html.theme_dark .no-items .no-items-image,html.theme_dark .full-loading-spinner .no-items-image,html.theme_nord .no-items .no-items-image,html.theme_nord .full-loading-spinner .no-items-image{background-image:url(images/search-desktop-dark.svg)}",
-  "html.theme_solarizedDark .no-items .no-items-image,html.theme_solarizedDark .full-loading-spinner .no-items-image{background-image:url(images/search-desktop-solarized.svg)}",
-  ".mfaType0{content:none!important;background:transparent no-repeat center/contain;background-image:url(images/0.png);width:100px;height:50px}",
+  ".no-items .no-items-image,.full-loading-spinner .no-items-image,.mfaType0{content:none!important}",
+  "app-pop-out{display:none!important}",
 ].join("\n");
 const popupCss = path.join(extension, "popup", "main.css");
 if (fs.existsSync(popupCss) && !fs.readFileSync(popupCss, "utf8").includes(cssFixMarker)) {

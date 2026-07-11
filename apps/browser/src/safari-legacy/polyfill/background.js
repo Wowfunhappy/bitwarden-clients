@@ -268,31 +268,12 @@
   app.addEventListener("navigate", function (e) { var t = tab(e.target), d = { tabId: t.id, frameId: 0, parentFrameId: -1, url: t.url, timeStamp: Date.now() };
     delete tabBadges[t.id]; refreshBadge();
     onUpdated.emit(t.id, { status: "loading", url: t.url }, t); onCommitted.emit(d); setTimeout(function () { onUpdated.emit(t.id, { status: "complete" }, tab(e.target)); onCompleted.emit(d); }, 0); }, true);
-  // Legacy Safari context menus are flat (no submenus), so rendering the extension's whole
-  // nested tree produces an unusable pile of unlabeled entries. Curate instead: one
-  // "Autofill" entry per login cipher matching the page (ids look like "autofill_<guid>")
-  // plus the top-level password generator. Click routing needs parentMenuItemId — the
-  // handler switches on it and reads the cipher id from the "<parent>_<cipherId>" name.
-  var CIPHER_AUTOFILL_RE = /^autofill_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-  var lastContextTab = null;
-  app.addEventListener("command", function (e) {
-    var m = menus[e.command];
-    if (m) {
-      var t = lastContextTab || active();
-      chrome.contextMenus.onClicked.emit({ menuItemId: e.command, parentMenuItemId: m.parentId,
-        pageUrl: t && t.url, editable: false, frameId: 0 }, tab(t));
-    } else chrome.commands.onCommand.emit(e.command);
-  }, false);
-  app.addEventListener("contextmenu", function (e) {
-    lastContextTab = e.target && e.target.browserWindow ? e.target : null;
-    Object.keys(menus).forEach(function (id) {
-      var m = menus[id]; if (!m || m.visible === false || !m.title || m.type === "separator") return;
-      var label = null;
-      if (CIPHER_AUTOFILL_RE.test(id)) label = "Bitwarden: Autofill - " + m.title;
-      else if (id === "generate-password") label = "Bitwarden: " + m.title;
-      if (label) { try { e.contextMenu.appendContextMenuItem(id, label, id); } catch (_) {} }
-    });
-  }, false);
+  // Context menu support is intentionally omitted: legacy Safari menus are flat (no
+  // submenus), which cannot express the extension's nested menu tree. The
+  // chrome.contextMenus API stays as an inert stub and no "contextmenu" listener is
+  // registered, so Safari's menu never gains Bitwarden entries. The corresponding
+  // settings toggle is hidden by the extension-page bridge.
+  app.addEventListener("command", function (e) { chrome.commands.onCommand.emit(e.command); }, false);
   g.chrome = chrome; g.browser = chrome; g.__bwLegacyChrome = chrome;
   setTimeout(function () { var k = "__bw_legacy_installed_version", old = ext.settings.getItem(k), reason = old ? old === manifest.version ? null : "update" : "install";
     ext.settings.setItem(k, manifest.version); if (reason) chrome.runtime.onInstalled.emit({ reason: reason, previousVersion: old || undefined }); chrome.runtime.onStartup.emit(); }, 500);
