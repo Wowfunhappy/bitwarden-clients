@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
-const child = require("child_process");
 
 const root = path.resolve(__dirname, "..");
 const build = path.join(root, "build");
@@ -36,6 +35,22 @@ function injectBridge(directory) {
   });
 }
 injectBridge(extension);
+
+// WebKit does not support CSS content:url() image replacement on <img> elements
+// (it works in Chrome), which the popup uses for its themed empty-state and 2FA
+// provider illustrations. Append equivalent background-image rules.
+const cssFixMarker = "/* safari-legacy content:url() fix */";
+const cssFix = [
+  cssFixMarker,
+  ".no-items .no-items-image,.full-loading-spinner .no-items-image{content:none!important;background:transparent no-repeat center/contain;background-image:url(images/search-desktop-light.svg);width:120px;height:120px}",
+  "html.theme_dark .no-items .no-items-image,html.theme_dark .full-loading-spinner .no-items-image,html.theme_nord .no-items .no-items-image,html.theme_nord .full-loading-spinner .no-items-image{background-image:url(images/search-desktop-dark.svg)}",
+  "html.theme_solarizedDark .no-items .no-items-image,html.theme_solarizedDark .full-loading-spinner .no-items-image{background-image:url(images/search-desktop-solarized.svg)}",
+  ".mfaType0{content:none!important;background:transparent no-repeat center/contain;background-image:url(images/0.png);width:100px;height:50px}",
+].join("\n");
+const popupCss = path.join(extension, "popup", "main.css");
+if (fs.existsSync(popupCss) && !fs.readFileSync(popupCss, "utf8").includes(cssFixMarker)) {
+  fs.appendFileSync(popupCss, "\n" + cssFix + "\n");
+}
 
 const iconSizes = [32, 48, 64, 96, 128];
 iconSizes.forEach((size) => {
@@ -99,13 +114,8 @@ const info = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 fs.writeFileSync(path.join(extension, "Info.plist"), info);
 
-fs.mkdirSync(dist, { recursive: true });
-const archive = path.join(dist, "dist-safari-legacy.zip");
-fs.rmSync(archive, { force: true });
-const result = child.spawnSync("/usr/bin/zip", ["-qry", archive, path.basename(extension)], {
-  cwd: staging,
-  stdio: "inherit",
-});
-if (result.status !== 0) throw new Error("zip failed with exit code " + result.status);
-console.log("Created " + extension);
-console.log("Created " + archive);
+// The legacy Safari target ships as an uncompressed, unpacked ".safariextension"
+// folder so it can be reloaded directly from disk in the browser's extension
+// loader without an unzip step.
+console.log("Created uncompressed extension bundle:");
+console.log("  " + extension);

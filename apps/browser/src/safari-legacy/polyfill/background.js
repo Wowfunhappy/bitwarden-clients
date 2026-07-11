@@ -48,6 +48,29 @@
       type: "normal", state: "normal", alwaysOnTop: false, tabs: populate ? w.tabs.map(tab) : undefined };
   }
   function active() { return app.activeBrowserWindow && app.activeBrowserWindow.activeTab; }
+  function resolveUrl(u) {
+    // Chrome resolves relative/root-relative extension URLs (e.g. the popout's
+    // "/popup/index.html?uilocation=popout#/tabs/vault") against the extension base;
+    // Safari tabs need an absolute URL.
+    if (u == null || u === "") return u;
+    u = String(u);
+    return /^[a-z][a-z0-9+.\-]*:/i.test(u) ? u : base + u.replace(/^\//, "");
+  }
+  function urlMatches(url, pattern) {
+    return (Array.isArray(pattern) ? pattern : [pattern]).some(function (p) {
+      var rx = new RegExp("^" + String(p).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+      return rx.test(url);
+    });
+  }
+  // Chrome badges are per-tab (and auto-clear on navigation); Safari has one badge
+  // per toolbar item. Track per-tab values and surface the active tab's badge.
+  var tabBadges = {}, globalBadge = "";
+  function refreshBadge() {
+    var t = active(), id = t ? tabId(t) : null;
+    var text = id != null && tabBadges[id] != null ? tabBadges[id] : globalBadge;
+    var n = text ? parseInt(text, 10) || 1 : 0;
+    (ext.toolbarItems || []).forEach(function (i) { i.badge = n; });
+  }
   function send(t, name, data) { if (t && t.page) { t.page.dispatchMessage(name, data); return true; } return false; }
   function dispatch(message, sender, reply) {
     var answered = false, waiting = false;
@@ -68,10 +91,14 @@
     return p;
   }
   function localPort(name) {
+    // Emulates chrome.runtime.connect() within one page. Listener callbacks must receive
+    // the port the listener was attached to (Chrome's Port event semantics), NOT the peer:
+    // BackgroundMemoryStorageService replies via its listener's port argument, so handing
+    // it the peer would route responses back to their sender and hang every state write.
     var front, back;
-    front = makePort(name, undefined, function (m) { setTimeout(function () { back.onMessage.emit(m, front); }, 0); },
+    front = makePort(name, undefined, function (m) { setTimeout(function () { back.onMessage.emit(m, back); }, 0); },
       function () { back.onDisconnect.emit(back); });
-    back = makePort(name, {}, function (m) { setTimeout(function () { front.onMessage.emit(m, back); }, 0); },
+    back = makePort(name, {}, function (m) { setTimeout(function () { front.onMessage.emit(m, front); }, 0); },
       function () { front.onDisconnect.emit(front); });
     setTimeout(function () { chrome.runtime.onConnect.emit(back); }, 0); return front;
   }
@@ -81,30 +108,42 @@
       return Array.isArray(q) ? q : typeof q === "string" ? [q] : Object.keys(q);
     }
     function value(k) { var v = settings.getItem(k); if (v == null) return undefined; try { return JSON.parse(v); } catch (_) { return v; } }
-    return {
+    // Changes must fire on BOTH the StorageArea's own onChanged (chrome.storage.local.onChanged,
+    // which AbstractChromeStorageService subscribes to for its updates$) and the aggregate
+    // chrome.storage.onChanged. A "save" change carries newValue; a "remove" change must not.
+    function emitChanges(changes) { self.onChanged.emit(changes); chrome.storage.onChanged.emit(changes, area); }
+    var self = {
       QUOTA_BYTES: 104857600, onChanged: new Event(),
       get: function (q, cb) { var r = {}; keys(q).forEach(function (k) {
         var v = value(k); if (v !== undefined) r[k] = v; else if (q && typeof q === "object" && !Array.isArray(q)) r[k] = q[k];
       }); return done(cb, r); },
       set: function (o, cb) { var changes = {}; Object.keys(o || {}).forEach(function (k) {
         changes[k] = { oldValue: value(k), newValue: o[k] }; settings.setItem(k, JSON.stringify(o[k]));
-      }); chrome.storage.onChanged.emit(changes, area); return done(cb); },
+      }); emitChanges(changes); return done(cb); },
       remove: function (q, cb) { var changes = {}; (Array.isArray(q) ? q : [q]).forEach(function (k) {
         changes[k] = { oldValue: value(k) }; settings.removeItem(k);
-      }); chrome.storage.onChanged.emit(changes, area); return done(cb); },
-      clear: function (cb) { keys(null).forEach(function (k) { settings.removeItem(k); }); return done(cb); },
+      }); emitChanges(changes); return done(cb); },
+      clear: function (cb) { var changes = {}; keys(null).forEach(function (k) { changes[k] = { oldValue: value(k) }; settings.removeItem(k); }); emitChanges(changes); return done(cb); },
       getBytesInUse: function (_, cb) { var n = 0; keys(null).forEach(function (k) { n += String(settings.getItem(k) || "").length * 2; }); return done(cb, n); }
     };
+    return self;
   }
   function memoryArea() {
-    return { onChanged: new Event(),
+    var self = { onChanged: new Event(),
       get: function (q, cb) { var r = {}, ks = q == null ? Object.keys(session) : Array.isArray(q) ? q : typeof q === "string" ? [q] : Object.keys(q);
         ks.forEach(function (k) { if (k in session) r[k] = session[k]; }); return done(cb, r); },
-      set: function (o, cb) { Object.keys(o || {}).forEach(function (k) { session[k] = o[k]; }); return done(cb); },
-      remove: function (q, cb) { (Array.isArray(q) ? q : [q]).forEach(function (k) { delete session[k]; }); return done(cb); },
+      set: function (o, cb) { var changes = {}; Object.keys(o || {}).forEach(function (k) { changes[k] = { oldValue: session[k], newValue: o[k] }; session[k] = o[k]; });
+        self.onChanged.emit(changes); chrome.storage.onChanged.emit(changes, "session"); return done(cb); },
+      remove: function (q, cb) { var changes = {}; (Array.isArray(q) ? q : [q]).forEach(function (k) { changes[k] = { oldValue: session[k] }; delete session[k]; });
+        self.onChanged.emit(changes); chrome.storage.onChanged.emit(changes, "session"); return done(cb); },
       clear: function (cb) { session = {}; return done(cb); }, setAccessLevel: function () { return Promise.resolve(); } };
+    return self;
   }
   var locale = read("_locales/" + (navigator.language || "en").replace("-", "_") + "/messages.json") || read("_locales/en/messages.json") || {};
+  // Chrome's i18n message lookup is case-insensitive (templates say "autofill",
+  // messages.json says "autoFill"), so keep a lowercased index alongside.
+  var lcLocale = {};
+  Object.keys(locale).forEach(function (k) { lcLocale[k.toLowerCase()] = locale[k]; });
   var onMessage = new Event(), onConnect = new Event(), onActivated = new Event(), onUpdated = new Event();
   var onCommitted = new Event(), onCompleted = new Event();
   var chrome = {
@@ -127,11 +166,11 @@
     tabs: { onActivated: onActivated, onUpdated: onUpdated, onRemoved: new Event(), onReplaced: new Event(),
       query: function (q, cb) { q = q || {}; var a = nativeTabs().filter(function (t) {
         return !(q.active && t.browserWindow.activeTab !== t) && !(q.currentWindow && t.browserWindow !== app.activeBrowserWindow) &&
-          !(q.windowId > 0 && winId(t.browserWindow) !== q.windowId);
+          !(q.windowId > 0 && winId(t.browserWindow) !== q.windowId) && !(q.url && !urlMatches(t.url || "", q.url));
       }).map(tab); return done(cb, a); },
       get: function (id, cb) { return done(cb, tab(findTab(id))); },
-      create: function (p, cb) { var w = app.activeBrowserWindow || app.openBrowserWindow(), t = w.openTab(); t.url = p.url || "about:blank"; if (p.active !== false) t.activate(); return done(cb, tab(t)); },
-      update: function (id, p, cb) { if (typeof id === "object") { cb = p; p = id; id = tabId(active()); } var t = findTab(id); if (t) { if (p.url) t.url = p.url; if (p.active || p.highlighted) t.activate(); } return done(cb, tab(t)); },
+      create: function (p, cb) { var w = app.activeBrowserWindow || app.openBrowserWindow(), t = w.openTab(); t.url = resolveUrl(p.url) || "about:blank"; if (p.active !== false) t.activate(); return done(cb, tab(t)); },
+      update: function (id, p, cb) { if (typeof id === "object") { cb = p; p = id; id = tabId(active()); } var t = findTab(id); if (t) { if (p.url) t.url = resolveUrl(p.url); if (p.active || p.highlighted) t.activate(); } return done(cb, tab(t)); },
       remove: function (q, cb) { (Array.isArray(q) ? q : [q]).forEach(function (id) { var t = findTab(id); if (t) t.close(); }); return done(cb); },
       reload: function (id, _, cb) { var t = findTab(typeof id === "number" ? id : tabId(active())); if (t) t.url = t.url; return done(cb); },
       sendMessage: function (id, m, opts, cb) { if (typeof opts === "function") { cb = opts; opts = {}; } var rid = "r" + sequence++;
@@ -145,16 +184,41 @@
       getCurrent: function (o, cb) { if (typeof o === "function") { cb = o; o = {}; } return done(cb, win(app.activeBrowserWindow, o && o.populate)); },
       get: function (id, o, cb) { if (typeof o === "function") { cb = o; o = {}; } return done(cb, win(app.browserWindows[id - 1], o && o.populate)); },
       getAll: function (o, cb) { return done(cb, app.browserWindows.map(function (w) { return win(w, o && o.populate); })); },
-      create: function (d, cb) { var w = app.openBrowserWindow(); if (d && d.url) w.activeTab.url = Array.isArray(d.url) ? d.url[0] : d.url; return done(cb, win(w, true)); },
+      create: function (d, cb) { var w = app.openBrowserWindow(); if (d && d.url) w.activeTab.url = resolveUrl(Array.isArray(d.url) ? d.url[0] : d.url); return done(cb, win(w, true)); },
       update: function (id, d, cb) { var w = app.browserWindows[id - 1]; if (w && d.focused) w.activeTab.activate(); return done(cb, win(w, true)); },
       remove: function (id, cb) { var w = app.browserWindows[id - 1]; if (w) w.close(); return done(cb); } },
     i18n: { getUILanguage: function () { return navigator.language || "en"; },
-      getMessage: function (n, s) { var e = locale[n]; if (!e) return ""; var v = e.message || "", a = s == null ? [] : Array.isArray(s) ? s : [s];
-        a.forEach(function (x, i) { v = v.replace(new RegExp("\\$" + (i + 1), "g"), x); }); return v.replace(/\$\$/g, "$"); },
+      // Chrome semantics: name lookup is case-insensitive; messages may contain
+      // named $PLACEHOLDER$ references whose "content" maps $1..$9 to substitutions.
+      getMessage: function (n, s) {
+        var e = locale[n] || lcLocale[String(n || "").toLowerCase()];
+        if (!e) return "";
+        var subs = s == null ? [] : Array.isArray(s) ? s : [s];
+        function fill(str) { return String(str == null ? "" : str).replace(/\$(\d)/g, function (_, d) {
+          var v = subs[Number(d) - 1]; return v == null ? "" : String(v); }); }
+        var v = String(e.message || "").replace(/\$([A-Za-z0-9_@]+)\$/g, function (whole, name) {
+          var ph = e.placeholders && e.placeholders[name], lc = name.toLowerCase();
+          if (!ph && e.placeholders) { for (var k in e.placeholders) { if (k.toLowerCase() === lc) { ph = e.placeholders[k]; break; } } }
+          return ph ? fill(ph.content) : whole;
+        });
+        return fill(v).replace(/\$\$/g, "$");
+      },
       getAcceptLanguages: function (cb) { return done(cb, [navigator.language || "en"]); } },
     browserAction: { onClicked: new Event(),
-      setIcon: function (d, cb) { var p = typeof d.path === "string" ? d.path : d.path && (d.path[19] || d.path[16] || d.path[38]); (ext.toolbarItems || []).forEach(function (i) { if (p) i.image = base + p; }); return done(cb); },
-      setBadgeText: function (d, cb) { (ext.toolbarItems || []).forEach(function (i) { i.badge = d.text ? Number(d.text) || 1 : 0; }); return done(cb); },
+      setIcon: function (d, cb) {
+        // The official legacy extension (v1.41.0) never swapped the toolbar image: the 18px
+        // monochrome template from Info.plist is the only graphic that renders correctly in
+        // a legacy Safari toolbar, so locked/gray requests keep the same shield. Pin it in
+        // case anything else reassigned the image.
+        (ext.toolbarItems || []).forEach(function (i) { try { i.image = base + "images/icon18_safari.png"; } catch (_) {} });
+        return done(cb);
+      },
+      setBadgeText: function (d, cb) {
+        var text = (d && d.text) || "";
+        if (d && d.tabId != null) { if (text) tabBadges[d.tabId] = text; else delete tabBadges[d.tabId]; }
+        else globalBadge = text;
+        refreshBadge(); return done(cb);
+      },
       setBadgeBackgroundColor: function (_, cb) { return done(cb); }, setTitle: function (d, cb) { (ext.toolbarItems || []).forEach(function (i) { i.toolTip = d.title; }); return done(cb); },
       enable: function (_, cb) { (ext.toolbarItems || []).forEach(function (i) { i.disabled = false; }); return done(cb); },
       disable: function (_, cb) { (ext.toolbarItems || []).forEach(function (i) { i.disabled = true; }); return done(cb); },
@@ -197,11 +261,38 @@
         function () { send(e.target, "bw.legacy.port", { portId: p.portId, disconnect: true }); delete ports[p.portId]; }); ports[p.portId] = port; onConnect.emit(port); }
     } else if (e.name === "bw.legacy.port" && ports[p.portId]) { if (p.disconnect) { ports[p.portId].onDisconnect.emit(ports[p.portId]); delete ports[p.portId]; } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]); }
   }, false);
-  app.addEventListener("activate", function (e) { onActivated.emit({ tabId: tabId(e.target), windowId: winId(e.target.browserWindow) }); }, true);
+  app.addEventListener("activate", function (e) {
+    if (e.target && e.target.browserWindow) onActivated.emit({ tabId: tabId(e.target), windowId: winId(e.target.browserWindow) });
+    refreshBadge();
+  }, true);
   app.addEventListener("navigate", function (e) { var t = tab(e.target), d = { tabId: t.id, frameId: 0, parentFrameId: -1, url: t.url, timeStamp: Date.now() };
+    delete tabBadges[t.id]; refreshBadge();
     onUpdated.emit(t.id, { status: "loading", url: t.url }, t); onCommitted.emit(d); setTimeout(function () { onUpdated.emit(t.id, { status: "complete" }, tab(e.target)); onCompleted.emit(d); }, 0); }, true);
-  app.addEventListener("command", function (e) { if (menus[e.command]) chrome.contextMenus.onClicked.emit({ menuItemId: e.command, pageUrl: e.target && e.target.url }, tab(e.target)); else chrome.commands.onCommand.emit(e.command); }, false);
-  app.addEventListener("contextmenu", function (e) { Object.keys(menus).forEach(function (id) { var m = menus[id]; if (m.visible !== false && m.title && m.type !== "separator") try { e.contextMenu.appendContextMenuItem(id, m.title, id); } catch (_) {} }); }, false);
+  // Legacy Safari context menus are flat (no submenus), so rendering the extension's whole
+  // nested tree produces an unusable pile of unlabeled entries. Curate instead: one
+  // "Autofill" entry per login cipher matching the page (ids look like "autofill_<guid>")
+  // plus the top-level password generator. Click routing needs parentMenuItemId — the
+  // handler switches on it and reads the cipher id from the "<parent>_<cipherId>" name.
+  var CIPHER_AUTOFILL_RE = /^autofill_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+  var lastContextTab = null;
+  app.addEventListener("command", function (e) {
+    var m = menus[e.command];
+    if (m) {
+      var t = lastContextTab || active();
+      chrome.contextMenus.onClicked.emit({ menuItemId: e.command, parentMenuItemId: m.parentId,
+        pageUrl: t && t.url, editable: false, frameId: 0 }, tab(t));
+    } else chrome.commands.onCommand.emit(e.command);
+  }, false);
+  app.addEventListener("contextmenu", function (e) {
+    lastContextTab = e.target && e.target.browserWindow ? e.target : null;
+    Object.keys(menus).forEach(function (id) {
+      var m = menus[id]; if (!m || m.visible === false || !m.title || m.type === "separator") return;
+      var label = null;
+      if (CIPHER_AUTOFILL_RE.test(id)) label = "Bitwarden: Autofill - " + m.title;
+      else if (id === "generate-password") label = "Bitwarden: " + m.title;
+      if (label) { try { e.contextMenu.appendContextMenuItem(id, label, id); } catch (_) {} }
+    });
+  }, false);
   g.chrome = chrome; g.browser = chrome; g.__bwLegacyChrome = chrome;
   setTimeout(function () { var k = "__bw_legacy_installed_version", old = ext.settings.getItem(k), reason = old ? old === manifest.version ? null : "update" : "install";
     ext.settings.setItem(k, manifest.version); if (reason) chrome.runtime.onInstalled.emit({ reason: reason, previousVersion: old || undefined }); chrome.runtime.onStartup.emit(); }, 500);
