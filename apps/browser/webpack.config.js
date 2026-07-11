@@ -14,6 +14,7 @@ if (process.env.NODE_ENV == null) {
 const ENV = (process.env.ENV = process.env.NODE_ENV);
 const manifestVersion = process.env.MANIFEST_VERSION == 3 ? 3 : 2;
 const browser = process.env.BROWSER;
+const safariLegacy = browser === "safari-legacy";
 
 function modifyManifestV3(buffer) {
   if (manifestVersion === 2 || !browser) {
@@ -190,6 +191,9 @@ const plugins = [
       { from: "./src/images", to: "images" },
       { from: "./src/popup/images", to: "popup/images" },
       { from: "./src/autofill/content/autofill.css", to: "content" },
+      ...(safariLegacy
+        ? [{ from: "./src/safari-legacy/polyfill", to: "safari-legacy" }]
+        : []),
     ],
   }),
   new MiniCssExtractPlugin({
