@@ -25,37 +25,31 @@
   );
 
   // UI adjustments for the legacy runtime, applied continuously since the popup is a
-  // single-page app that re-renders routes:
-  // - Empty-state and 2FA illustrations come from CSS "content: url(...)" on <img>,
-  //   which WebKit does not support; assign a real src per the active theme instead.
-  // - The popout button cannot work: legacy Safari refuses to load extension pages in
-  //   tabs (v1.41.0 shipped popOut() as a no-op with the comment "Safari can't open
-  //   popup in full page tab :(").
-  // - The context menu setting is hidden because context menu support is omitted from
+  // single-page app that re-renders routes. The illustrations that stock CSS supplies
+  // via content:url() on <img> and the popout button (legacy Safari cannot load
+  // extension pages in tabs; v1.41.0 shipped popOut() as a no-op) are hidden by rules
+  // the packaging step appends to popup/main.css. Here:
+  // - Hide header sections that only held the popout button, so the search field
+  //   keeps its original inset instead of running against the window edge.
+  // - Hide the context menu setting, because context menu support is omitted from
   //   this port (legacy Safari menus cannot express the nested menu tree).
-  var doc = g.document, base = safari.extension.baseURI;
+  var doc = g.document;
   function applyUiFixes() {
-    var cls = doc.documentElement.className || "";
-    var suffix = /theme_solarizedDark/.test(cls) ? "-solarized" : /theme_(dark|nord)/.test(cls) ? "-dark" : "-light";
-    var want = base + "popup/images/search-desktop" + suffix + ".svg";
-    Array.prototype.forEach.call(doc.querySelectorAll("img.no-items-image"), function (img) {
-      if (img.getAttribute("src") !== want) img.setAttribute("src", want);
-    });
-    Array.prototype.forEach.call(doc.querySelectorAll("img.mfaType0"), function (img) {
-      var mfa = base + "popup/images/0.png";
-      if (img.getAttribute("src") !== mfa) img.setAttribute("src", mfa);
-    });
     function hide(el) { if (el && el.style.display !== "none") el.style.display = "none"; }
-    Array.prototype.forEach.call(doc.querySelectorAll("app-pop-out"), hide);
+    Array.prototype.forEach.call(doc.querySelectorAll("header .left, header .right"), function (el) {
+      var kids = el.children, onlyPopout = kids.length > 0;
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i].tagName.toLowerCase() !== "app-pop-out") { onlyPopout = false; break; }
+      }
+      if (onlyPopout) hide(el);
+    });
     var cm = doc.getElementById("context-menu");
     hide(cm && cm.closest ? cm.closest(".box-content-row") : null);
     hide(doc.getElementById("context-menuHelp"));
   }
   function watchUi() {
     applyUiFixes();
-    new MutationObserver(applyUiFixes).observe(doc.documentElement, {
-      childList: true, subtree: true, attributes: true, attributeFilter: ["class"],
-    });
+    new MutationObserver(applyUiFixes).observe(doc.documentElement, { childList: true, subtree: true });
   }
   if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", watchUi);
   else watchUi();
