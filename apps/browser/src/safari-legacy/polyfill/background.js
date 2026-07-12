@@ -48,21 +48,28 @@
       type: "normal", state: "normal", alwaysOnTop: false, tabs: populate ? w.tabs.map(tab) : undefined };
   }
   function active() { return app.activeBrowserWindow && app.activeBrowserWindow.activeTab; }
+  // Legacy Safari baseURIs place a random per-session token in the path:
+  // "safari-extension://<bundle-id>/<token>/". Paths the app derives from
+  // location.pathname already contain the token, while hardcoded root-relative
+  // paths ("/images/icon19.png") do not — resolve the former against the origin
+  // and the latter against baseURI, or the token gets doubled/omitted and Safari
+  // fails with "there is no such file".
+  var origin = base.replace(/^([a-z][a-z0-9+.\-]*:\/\/[^\/]*)\/.*$/i, "$1");
+  var basePath = base.slice(origin.length);
+  function extUrl(p) {
+    p = String(p == null ? "" : p);
+    if (p === "" || /^[a-z][a-z0-9+.\-]*:/i.test(p)) return p;
+    if (p.charAt(0) === "/") {
+      if ((p + "/").indexOf(basePath) === 0) return origin + p;
+      return base + p.replace(/^\/+/, "");
+    }
+    return base + p;
+  }
   function resolveUrl(u) {
     // Chrome resolves relative/root-relative extension URLs (e.g. the popout's
-    // "/popup/index.html?uilocation=popout#/tabs/vault") against the extension base;
-    // Safari tabs need an absolute URL.
-    if (u == null || u === "") return u;
-    u = String(u);
-    // Repair extension URLs whose authority was case-mangled: the app round-trips
-    // popout URLs through new URL(...).toString() (buildPopoutUrl), and WHATWG
-    // normalization can lowercase the "com.bitwarden.safari-TEAMID" authority.
-    // Safari resolves safari-extension:// URLs case-sensitively and shows
-    // "Safari can't open the page" for the lowercased form.
-    if (u.length >= base.length && u.slice(0, base.length).toLowerCase() === base.toLowerCase()) {
-      return base + u.slice(base.length);
-    }
-    return /^[a-z][a-z0-9+.\-]*:/i.test(u) ? u : base + u.replace(/^\//, "");
+    // "/popup/index.html?uilocation=popout#/tabs/vault") against the extension
+    // base; Safari tabs need an absolute URL.
+    return u == null || u === "" ? u : extUrl(u);
   }
   function urlMatches(url, pattern) {
     return (Array.isArray(pattern) ? pattern : [pattern]).some(function (p) {
@@ -158,7 +165,7 @@
     __bitwardenSafariLegacy: true,
     runtime: { id: "com.bitwarden.safari", lastError: null, onMessage: onMessage, onConnect: onConnect,
       onInstalled: new Event(), onStartup: new Event(), onSuspend: new Event(),
-      getManifest: function () { return manifest; }, getURL: function (p) { return base + String(p || "").replace(/^\//, ""); },
+      getManifest: function () { return manifest; }, getURL: function (p) { return p == null || p === "" ? base : extUrl(p); },
       getPlatformInfo: function (cb) { return done(cb, { os: "mac", arch: "x86-64", nacl_arch: "x86-64" }); },
       sendMessage: function (m, cb) { return new Promise(function (resolve) { dispatch(m, {}, function (r) { if (cb) cb(r); resolve(r); }); }); },
       connect: function (info) { return localPort(info && info.name); },
@@ -166,7 +173,7 @@
       sendNativeMessage: function (_, __, cb) { return done(cb, null); },
       reload: function () { location.reload(); },
       openOptionsPage: function (cb) { return chrome.tabs.create({ url: base + "popup/index.html#/settings" }, cb); } },
-    extension: { getURL: function (p) { return base + String(p || "").replace(/^\//, ""); },
+    extension: { getURL: function (p) { return p == null || p === "" ? base : extUrl(p); },
       getBackgroundPage: function () { return g; },
       getViews: function (p) { var v = []; (ext.popovers || []).forEach(function (x) { if (x.contentWindow) v.push(x.contentWindow); }); return p && p.type === "popup" ? v : [g].concat(v); } },
     storage: { onChanged: new Event(), local: null, sync: null, session: memoryArea(),

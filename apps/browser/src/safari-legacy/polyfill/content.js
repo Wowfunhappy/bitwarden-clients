@@ -36,8 +36,24 @@
   var chrome = { __bitwardenSafariLegacyContent: true,
     runtime: { id: "com.bitwarden.safari", lastError: null, onMessage: onMessage, sendMessage: sendMessage, connect: connect,
       getManifest: function () { return { manifest_version: 2, name: "Bitwarden", version: "2024.11.2" }; },
-      getURL: function (p) { return safari.extension.baseURI + String(p || "").replace(/^\//, ""); } },
-    extension: { getURL: function (p) { return safari.extension.baseURI + String(p || "").replace(/^\//, ""); } } };
+      getURL: getURL },
+    extension: { getURL: getURL } };
+  // Mirrors the background bridge: legacy Safari baseURIs carry a per-session path
+  // token; root-relative paths that already include it resolve against the origin,
+  // hardcoded root-relative asset paths resolve against baseURI.
+  function getURL(p) {
+    var base = safari.extension.baseURI;
+    var origin = base.replace(/^([a-z][a-z0-9+.\-]*:\/\/[^\/]*)\/.*$/i, "$1");
+    var basePath = base.slice(origin.length);
+    p = String(p == null ? "" : p);
+    if (p === "") return base;
+    if (/^[a-z][a-z0-9+.\-]*:/i.test(p)) return p;
+    if (p.charAt(0) === "/") {
+      if ((p + "/").indexOf(basePath) === 0) return origin + p;
+      return base + p.replace(/^\/+/, "");
+    }
+    return base + p;
+  }
   g.chrome = chrome; g.browser = chrome;
   safari.self.addEventListener("message", function (e) {
     var p = e.message || {};
