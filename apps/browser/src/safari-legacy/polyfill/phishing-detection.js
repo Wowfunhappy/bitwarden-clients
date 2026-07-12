@@ -94,11 +94,34 @@
   // The warning overlay is injected into the offending tab. It runs in the content-
   // script world (where `chrome` is available), covers the page, blocks interaction,
   // and re-adds itself if the page removes it.
-  function overlayCode(phishingUrl) {
-    var payload = { url: phishingUrl };
+  function overlayCode(phishingUrl, source) {
+    var payload = { url: phishingUrl, source: source };
     return (
       "(" +
       function (data) {
+        // Only render if the page this injection actually landed on is the flagged URL.
+        // Our navigation detection can emit a stale event for the flagged URL a moment
+        // after the tab has already navigated elsewhere (notably the pathological
+        // infinite-loading test page, which keeps Safari emitting navigate events after
+        // "Get me out" → back), which would otherwise drop this warning onto the
+        // innocent destination page.
+        function pageKey(u) {
+          try {
+            var x = new URL(u);
+            return x.host + x.pathname.replace(/\/+$/, "") + x.search;
+          } catch (e) {
+            return String(u).replace(/^https?:\/\//, "").replace(/\/+$/, "");
+          }
+        }
+        if (pageKey(location.href) !== pageKey(data.url)) {
+          try {
+            console.warn(
+              "[bw-phishing] suppressed stale warning (src=" + data.source + "): flagged " +
+                data.url + " but this page is " + location.href,
+            );
+          } catch (_) {}
+          return;
+        }
         if (window.__bwPhishingOverlayUrl === data.url) return;
         window.__bwPhishingOverlayUrl = data.url;
         var ID = "__bw_phishing_overlay";
@@ -133,40 +156,28 @@
             "</div>";
           return host;
         }
-        var overlay = build();
-        (document.documentElement || document.body).appendChild(overlay);
-        document.getElementById(ID + "_leave").addEventListener("click", function () {
-          if (history.length > 1) {
-            history.back();
-          } else {
-            location.replace("about:blank");
-          }
-        });
-        document.getElementById(ID + "_ignore").addEventListener("click", function () {
+        function leave() {
+          if (history.length > 1) { history.back(); } else { location.replace("about:blank"); }
+        }
+        function dismiss() {
           teardown();
-          try {
-            chrome.runtime.sendMessage({ command: "bwPhishingIgnore", url: data.url });
-          } catch (_) {}
-        });
+          try { chrome.runtime.sendMessage({ command: "bwPhishingIgnore", url: data.url }); } catch (_) {}
+        }
+        function wire() {
+          document.getElementById(ID + "_leave").addEventListener("click", leave);
+          document.getElementById(ID + "_ignore").addEventListener("click", dismiss);
+        }
+        (document.documentElement || document.body).appendChild(build());
+        wire();
         // Re-add the overlay if the page tries to remove it.
         var mo = new MutationObserver(function () {
           if (window.__bwPhishingDismissed) return;
           if (!document.getElementById(ID)) {
-            overlay = build();
-            (document.documentElement || document.body).appendChild(overlay);
+            (document.documentElement || document.body).appendChild(build());
             wire();
           }
         });
         mo.observe(document.documentElement, { childList: true, subtree: true });
-        function wire() {
-          document.getElementById(ID + "_leave").addEventListener("click", function () {
-            if (history.length > 1) { history.back(); } else { location.replace("about:blank"); }
-          });
-          document.getElementById(ID + "_ignore").addEventListener("click", function () {
-            teardown();
-            try { chrome.runtime.sendMessage({ command: "bwPhishingIgnore", url: data.url }); } catch (_) {}
-          });
-        }
         function teardown() {
           window.__bwPhishingDismissed = true;
           mo.disconnect();
@@ -184,15 +195,15 @@
   // content script to be listening. On a fresh navigation it may not be ready at commit
   // time, so inject with a few bounded retries; the overlay code is idempotent, so extra
   // attempts are harmless no-ops once it has landed.
-  function injectOverlay(tabId, url, attempt) {
+  function injectOverlay(tabId, url, attempt, source) {
     if (ignored[url]) return;
     try {
-      chrome.tabs.executeScript(tabId, { code: overlayCode(url), frameId: 0 });
+      chrome.tabs.executeScript(tabId, { code: overlayCode(url, source), frameId: 0 });
     } catch (e) {
       log("overlay injection failed: " + e);
     }
     if (attempt < 4) {
-      g.setTimeout(function () { injectOverlay(tabId, url, attempt + 1); }, 300 + attempt * 400);
+      g.setTimeout(function () { injectOverlay(tabId, url, attempt + 1, source); }, 300 + attempt * 400);
     }
   }
 
@@ -202,8 +213,7 @@
     if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) return;
     if (ignored[url]) return;
     if (!isPhishing(url)) return;
-    log("phishing navigation detected: " + url);
-    injectOverlay(details.tabId, url, 0);
+    injectOverlay(details.tabId, url, 0, details.source || "?");
   }
 
   chrome.webNavigation.onCommitted.addListener(handleNavigation);

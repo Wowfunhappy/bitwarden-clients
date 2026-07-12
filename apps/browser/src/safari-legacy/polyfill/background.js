@@ -382,8 +382,8 @@
       // Tab-state reports from the content bridge (see content.js). This is the one
       // signal channel proven reliable in the hosting browser — uBlock's legacy port
       // tracks tabs the same way.
-      if (p.kind === "focus") { emitActivation(e.target); emitNavigation(e.target, e.target.url || p.url || "", false); }
-      else emitNavigation(e.target, p.url || e.target.url || "", true);
+      if (p.kind === "focus") { emitActivation(e.target); emitNavigation(e.target, e.target.url || p.url || "", false, "content-focus"); }
+      else emitNavigation(e.target, p.url || e.target.url || "", true, "content-report");
     }
   }, false);
   // Tab-state tracking. All sources — Safari's application events, content-script
@@ -399,7 +399,7 @@
     onActivated.emit({ tabId: id, windowId: wid });
     refreshBadge();
   }
-  function emitNavigation(t, url, force) {
+  function emitNavigation(t, url, force, source) {
     // force=true marks a real navigation signal (Safari navigate event, content
     // script load/nav report): emit even for a same-URL reload unless an identical
     // report arrived moments ago (double delivery of one navigation). Unforced
@@ -411,7 +411,9 @@
     var prev = tabUrls[id], now = Date.now();
     if (prev && prev.url === url && (!force || now - prev.time < 1500)) return;
     tabUrls[id] = { url: url, time: now };
-    var tb = tab(t), d = { tabId: id, frameId: 0, parentFrameId: -1, url: url, timeStamp: now };
+    // `source` labels which synthesis path emitted this (navigate-event / content-report
+    // / content-focus / poll); consumers ignore it, but it aids diagnosing stale emits.
+    var tb = tab(t), d = { tabId: id, frameId: 0, parentFrameId: -1, url: url, timeStamp: now, source: source };
     delete tabBadges[id]; refreshBadge();
     onUpdated.emit(id, { status: "loading", url: url }, tb); onCommitted.emit(d);
     setTimeout(function () { onUpdated.emit(id, { status: "complete" }, tab(t)); onCompleted.emit(d); }, 0);
@@ -419,7 +421,7 @@
   function checkActiveTab() {
     var t = active(); if (!t) return;
     emitActivation(t);
-    emitNavigation(t, t.url || "", false);
+    emitNavigation(t, t.url || "", false, "poll");
   }
   // Application-level events must be registered with useCapture — activate and
   // deactivate are dispatched as non-bubbling, so bubble-phase listeners on the
@@ -432,7 +434,7 @@
     if (e.target && e.target.browserWindow) emitActivation(e.target);
     refreshBadge();
   });
-  onAppEvent("navigate", function (e) { if (e.target && e.target.browserWindow) emitNavigation(e.target, e.target.url || "", true); });
+  onAppEvent("navigate", function (e) { if (e.target && e.target.browserWindow) emitNavigation(e.target, e.target.url || "", true, "navigate-event"); });
   // A dismissed popover (focus loss or the user clicking away) fires no application
   // event, but a single-action popout waiting inside it — e.g. a fido2 assertion
   // prompting to unlock a locked vault — must not hang the requesting page. Watch
