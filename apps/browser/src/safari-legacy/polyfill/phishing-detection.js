@@ -29,6 +29,16 @@
   var blocklist = null; // Set<string> of raw blocklist entries; null until first load
   var ignored = Object.create(null); // urls the user chose to bypass this session
 
+  // Bitwarden's hardcoded test addresses (from the upstream matcher). Real phishing
+  // URLs are taken down within hours, so these give a stable way to verify the feature.
+  // https://bitwarden.github.io/phishing-test-page/inf-load/ is a real, loadable page.
+  var TEST_URLS = new Set([
+    "http://phishing.testcategory.com/",
+    "https://phishing.testcategory.com/",
+    "https://phishing.testcategory.com/block",
+    "https://bitwarden.github.io/phishing-test-page/inf-load/",
+  ]);
+
   function log(msg) { try { console.info("[bw-phishing] " + msg); } catch (_) {} }
 
   function loadBlocklist() {
@@ -53,10 +63,10 @@
       });
   }
 
-  // Mirrors the upstream matcher: check the href and its trailing-slash / opposite-
-  // protocol variants against the raw blocklist entries.
-  function isPhishing(href) {
-    if (!blocklist) return false;
+  // Mirrors the upstream matcher: the href and its trailing-slash / opposite-protocol
+  // variants, checked against the hardcoded test set (always) and the blocklist (once
+  // loaded). Test URLs therefore work even before the list finishes fetching.
+  function urlVariants(href) {
     var variants = [];
     function add(u) {
       variants.push(u);
@@ -68,10 +78,17 @@
       : href.indexOf("http://") === 0 ? "https://" + href.slice(7)
       : null;
     if (swapped) add(swapped);
+    return variants;
+  }
+  function inSet(variants, set) {
     for (var i = 0; i < variants.length; i++) {
-      if (blocklist.has(variants[i])) return true;
+      if (set.has(variants[i])) return true;
     }
     return false;
+  }
+  function isPhishing(href) {
+    var variants = urlVariants(href);
+    return inSet(variants, TEST_URLS) || (blocklist != null && inSet(variants, blocklist));
   }
 
   // The warning overlay is injected into the offending tab. It runs in the content-
