@@ -54,6 +54,40 @@
     }
     return base + p;
   }
+  // The injected autofill and overlay scripts read translations synchronously via
+  // chrome.i18n.getMessage. Fetch the message catalog lazily — one synchronous
+  // request per page, and only on pages where an injected script asks for it.
+  var localeData = null, localeLower = null;
+  function readJson(path) {
+    try { var x = new XMLHttpRequest(); x.open("GET", getURL(path), false); x.send(); return JSON.parse(x.responseText); }
+    catch (_) { return null; }
+  }
+  function ensureLocale() {
+    if (localeData) return;
+    localeData = readJson("_locales/" + (navigator.language || "en").replace("-", "_") + "/messages.json") || readJson("_locales/en/messages.json") || {};
+    localeLower = {};
+    Object.keys(localeData).forEach(function (k) { localeLower[k.toLowerCase()] = localeData[k]; });
+  }
+  chrome.i18n = {
+    getUILanguage: function () { return navigator.language || "en"; },
+    getAcceptLanguages: function (cb) { var v = [navigator.language || "en"]; if (cb) setTimeout(function () { cb(v); }, 0); return Promise.resolve(v); },
+    // Chrome semantics: name lookup is case-insensitive; messages may contain named
+    // $PLACEHOLDER$ references whose "content" maps $1..$9 to substitutions.
+    getMessage: function (n, s) {
+      ensureLocale();
+      var e = localeData[n] || localeLower[String(n || "").toLowerCase()];
+      if (!e) return "";
+      var subs = s == null ? [] : Array.isArray(s) ? s : [s];
+      function fill(str) { return String(str == null ? "" : str).replace(/\$(\d)/g, function (_, d) {
+        var v = subs[Number(d) - 1]; return v == null ? "" : String(v); }); }
+      var v = String(e.message || "").replace(/\$([A-Za-z0-9_@]+)\$/g, function (whole, name) {
+        var ph = e.placeholders && e.placeholders[name], lc = name.toLowerCase();
+        if (!ph && e.placeholders) { for (var k in e.placeholders) { if (k.toLowerCase() === lc) { ph = e.placeholders[k]; break; } } }
+        return ph ? fill(ph.content) : whole;
+      });
+      return fill(v).replace(/\$\$/g, "$");
+    },
+  };
   g.chrome = chrome; g.browser = chrome;
   safari.self.addEventListener("message", function (e) {
     var p = e.message || {};
