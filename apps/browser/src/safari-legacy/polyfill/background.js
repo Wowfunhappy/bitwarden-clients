@@ -344,17 +344,35 @@
         function () { send(e.target, "bw.legacy.port", { portId: p.portId, disconnect: true }); delete ports[p.portId]; }); ports[p.portId] = port; onConnect.emit(port); }
     } else if (e.name === "bw.legacy.port" && ports[p.portId]) { if (p.disconnect) { ports[p.portId].onDisconnect.emit(ports[p.portId]); delete ports[p.portId]; } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]); }
   }, false);
-  app.addEventListener("activate", function (e) {
+  // Register tab events in BOTH phases: uBlock's working legacy port listens in the
+  // bubble phase, while capture-phase-only registration coincided with these events
+  // never arriving here. The seen-flag keeps a doubly-delivered event from running
+  // the handler twice.
+  function onAppEvent(name, fn) {
+    var handler = function (e) { if (e.__bwHandled) return; e.__bwHandled = true; fn(e); };
+    app.addEventListener(name, handler, false);
+    app.addEventListener(name, handler, true);
+  }
+  onAppEvent("activate", function (e) {
     if (e.target && e.target.browserWindow) {
       noteActiveTab(e.target);
       onActivated.emit({ tabId: tabId(e.target), windowId: winId(e.target.browserWindow) });
     }
     refreshBadge();
-  }, true);
-  app.addEventListener("navigate", function (e) { var t = tab(e.target), d = { tabId: t.id, frameId: 0, parentFrameId: -1, url: t.url, timeStamp: Date.now() };
+  });
+  onAppEvent("navigate", function (e) { var t = tab(e.target), d = { tabId: t.id, frameId: 0, parentFrameId: -1, url: t.url, timeStamp: Date.now() };
     if (active() === e.target) { lastActiveTabId = t.id; lastActiveUrl = t.url || ""; }
     delete tabBadges[t.id]; refreshBadge();
-    onUpdated.emit(t.id, { status: "loading", url: t.url }, t); onCommitted.emit(d); setTimeout(function () { onUpdated.emit(t.id, { status: "complete" }, tab(e.target)); onCompleted.emit(d); }, 0); }, true);
+    onUpdated.emit(t.id, { status: "loading", url: t.url }, t); onCommitted.emit(d); setTimeout(function () { onUpdated.emit(t.id, { status: "complete" }, tab(e.target)); onCompleted.emit(d); }, 0); });
+  // "navigate" was unreliable even in genuine legacy Safari (uBlock's port avoided it,
+  // tracking pushState from content scripts instead); "beforeNavigate" is the
+  // better-supported signal, so use it as an additional navigation source. The
+  // poller's snapshot comparison deduplicates whichever arrives first.
+  onAppEvent("beforeNavigate", function (e) {
+    if (!e.target || !e.target.browserWindow || !e.url) return;
+    setTimeout(function () { checkActiveTab(); }, 0);
+    setTimeout(function () { checkActiveTab(); }, 250);
+  });
   // Safari's "activate"/"navigate" events are not reliably delivered in every host,
   // and everything downstream (badge counts, the popup's current-tab view, dynamic
   // content-script registration) is keyed off Chrome's tab events. Poll the active
