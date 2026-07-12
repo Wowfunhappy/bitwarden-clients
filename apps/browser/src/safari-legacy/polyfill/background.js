@@ -388,26 +388,22 @@
     emitActivation(t);
     emitNavigation(t, t.url || "", false);
   }
-  // Register the application-level tab events in BOTH phases (delivery phase differs
-  // between hosts). Dedupe via WeakSet — an expando write would throw under strict
-  // mode if the host's event wrappers are non-extensible, killing the handler.
+  // Application-level events must be registered with useCapture — activate and
+  // deactivate are dispatched as non-bubbling, so bubble-phase listeners on the
+  // application never see them (verified by probing; navigate/beforeNavigate/popover
+  // deliver in both phases). uBlock's legacy port registers the same way.
   function onAppEvent(name, fn) {
-    var seen = typeof WeakSet === "function" ? new WeakSet() : null;
-    var handler = function (e) {
-      if (seen) { try { if (seen.has(e)) return; seen.add(e); } catch (_) {} }
-      fn(e);
-    };
-    app.addEventListener(name, handler, false);
-    app.addEventListener(name, handler, true);
+    app.addEventListener(name, fn, true);
   }
   onAppEvent("activate", function (e) {
     if (e.target && e.target.browserWindow) emitActivation(e.target);
     refreshBadge();
   });
   onAppEvent("navigate", function (e) { if (e.target && e.target.browserWindow) emitNavigation(e.target, e.target.url || "", true); });
-  // Last-resort poller. Note that hidden pages (like this global page) may receive
-  // heavy DOM-timer throttling in modern WebKit, so this can be minutes late — the
-  // content-script reports above are the primary signal.
+  // Backstop poller (global-page timers verified to run at full rate in this host).
+  // It covers what neither application events nor content-script reports see:
+  // pages without content scripts (Top Sites, blank tabs) and SPA pushState
+  // navigations. All sources dedupe through the emitters above.
   setInterval(checkActiveTab, 1000);
   // Legacy popovers persist between opens, but the popup app assumes Chrome's popup
   // lifecycle — a fresh page on every open that inspects the active tab at boot —
