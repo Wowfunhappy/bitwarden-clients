@@ -14,7 +14,7 @@
     alarms = {};
   var session = {},
     manifest = read("_locales/en/messages.json") && read("manifest.json");
-  manifest = manifest || { manifest_version: 2, name: "Bitwarden", version: "2024.11.2" };
+  manifest = manifest || { manifest_version: 2, name: "Bitwarden", version: "2024.11.2-a" };
 
   function read(path) {
     try {

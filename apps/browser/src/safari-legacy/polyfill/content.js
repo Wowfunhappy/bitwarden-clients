@@ -92,7 +92,7 @@
       sendMessage: sendMessage,
       connect: connect,
       getManifest: function () {
-        return { manifest_version: 2, name: "Bitwarden", version: "2024.11.2" };
+        return { manifest_version: 2, name: "Bitwarden", version: "2024.11.2-a" };
       },
       getURL: getURL,
     },
