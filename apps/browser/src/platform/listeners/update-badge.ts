@@ -82,6 +82,9 @@ export class UpdateBadge {
 
     const enableBadgeCounter = await firstValueFrom(this.badgeSettingsService.enableBadgeCounter$);
     if (!enableBadgeCounter) {
+      // Clear any previously-shown count so disabling the counter hides the badge
+      // immediately, rather than leaving the stale number until the next navigation.
+      await this.clearBadgeText();
       return;
     }
 
