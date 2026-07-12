@@ -64,7 +64,15 @@
   }
   function ensureLocale() {
     if (localeData) return;
-    localeData = readJson("_locales/" + (navigator.language || "en").replace("-", "_") + "/messages.json") || readJson("_locales/en/messages.json") || {};
+    // Only these regional variants ship in _locales; requesting a missing directory
+    // logs a console error on the host page, so fall back deliberately.
+    var regionals = ["en_GB", "en_IN", "pt_BR", "pt_PT", "zh_CN", "zh_TW"];
+    var full = (navigator.language || "en").replace("-", "_"), lang = full.split("_")[0], candidates = [];
+    if (regionals.indexOf(full) >= 0) candidates.push(full);
+    if (candidates.indexOf(lang) < 0) candidates.push(lang);
+    if (candidates.indexOf("en") < 0) candidates.push("en");
+    for (var i = 0; i < candidates.length && !localeData; i++) localeData = readJson("_locales/" + candidates[i] + "/messages.json");
+    localeData = localeData || {};
     localeLower = {};
     Object.keys(localeData).forEach(function (k) { localeLower[k.toLowerCase()] = localeData[k]; });
   }

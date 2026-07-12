@@ -156,7 +156,20 @@
       clear: function (cb) { session = {}; return done(cb); }, setAccessLevel: function () { return Promise.resolve(); } };
     return self;
   }
-  var locale = read("_locales/" + (navigator.language || "en").replace("-", "_") + "/messages.json") || read("_locales/en/messages.json") || {};
+  // Pick the message catalog without requesting directories that don't exist (a
+  // failed load logs a console error on every page): only these regional variants
+  // ship in _locales; anything else falls back to the bare language, then English.
+  var REGIONAL_LOCALES = ["en_GB", "en_IN", "pt_BR", "pt_PT", "zh_CN", "zh_TW"];
+  function localeCandidates() {
+    var full = (navigator.language || "en").replace("-", "_"), lang = full.split("_")[0], out = [];
+    if (REGIONAL_LOCALES.indexOf(full) >= 0) out.push(full);
+    if (out.indexOf(lang) < 0) out.push(lang);
+    if (out.indexOf("en") < 0) out.push("en");
+    return out;
+  }
+  var locale = null;
+  localeCandidates().some(function (l) { locale = read("_locales/" + l + "/messages.json"); return !!locale; });
+  locale = locale || {};
   // Chrome's i18n message lookup is case-insensitive (templates say "autofill",
   // messages.json says "autoFill"), so keep a lowercased index alongside.
   var lcLocale = {};
@@ -209,7 +222,7 @@
       executeScript: function (id, d, cb) { send(findTab(id), "bw.legacy.execute", { file: d.file, code: d.code, frameId: d.frameId, baseURI: base }); return done(cb, []); },
       insertCSS: function (id, d, cb) { send(findTab(id), "bw.legacy.execute", { cssFile: d.file, cssCode: d.code, frameId: d.frameId, baseURI: base }); return done(cb); },
       captureVisibleTab: function (_, __, cb) { return done(cb, null); } },
-    windows: { WINDOW_ID_CURRENT: -2, onCreated: new Event(), onRemoved: new Event(),
+    windows: { WINDOW_ID_CURRENT: -2, WINDOW_ID_NONE: -1, onCreated: new Event(), onRemoved: new Event(), onFocusChanged: new Event(),
       getCurrent: function (o, cb) { if (typeof o === "function") { cb = o; o = {}; } return done(cb, win(app.activeBrowserWindow, o && o.populate)); },
       get: function (id, o, cb) { if (typeof o === "function") { cb = o; o = {}; } return done(cb, win(app.browserWindows[id - 1], o && o.populate)); },
       getAll: function (o, cb) { return done(cb, app.browserWindows.map(function (w) { return win(w, o && o.populate); })); },
@@ -332,12 +345,45 @@
     } else if (e.name === "bw.legacy.port" && ports[p.portId]) { if (p.disconnect) { ports[p.portId].onDisconnect.emit(ports[p.portId]); delete ports[p.portId]; } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]); }
   }, false);
   app.addEventListener("activate", function (e) {
-    if (e.target && e.target.browserWindow) onActivated.emit({ tabId: tabId(e.target), windowId: winId(e.target.browserWindow) });
+    if (e.target && e.target.browserWindow) {
+      noteActiveTab(e.target);
+      onActivated.emit({ tabId: tabId(e.target), windowId: winId(e.target.browserWindow) });
+    }
     refreshBadge();
   }, true);
   app.addEventListener("navigate", function (e) { var t = tab(e.target), d = { tabId: t.id, frameId: 0, parentFrameId: -1, url: t.url, timeStamp: Date.now() };
+    if (active() === e.target) { lastActiveTabId = t.id; lastActiveUrl = t.url || ""; }
     delete tabBadges[t.id]; refreshBadge();
     onUpdated.emit(t.id, { status: "loading", url: t.url }, t); onCommitted.emit(d); setTimeout(function () { onUpdated.emit(t.id, { status: "complete" }, tab(e.target)); onCompleted.emit(d); }, 0); }, true);
+  // Safari's "activate"/"navigate" events are not reliably delivered in every host,
+  // and everything downstream (badge counts, the popup's current-tab view, dynamic
+  // content-script registration) is keyed off Chrome's tab events. Poll the active
+  // tab as a fallback and synthesize the events Safari failed to send; the real
+  // listeners above keep these snapshots current, so nothing double-fires.
+  var lastActiveTabId = null, lastActiveUrl = null, lastWindowId = null;
+  function noteActiveTab(t) {
+    lastActiveTabId = tabId(t); lastActiveUrl = t.url || "";
+    if (t.browserWindow) lastWindowId = winId(t.browserWindow);
+  }
+  function checkActiveTab() {
+    var t = active(); if (!t) return;
+    var id = tabId(t), wid = winId(t.browserWindow), url = t.url || "";
+    if (wid !== lastWindowId) { lastWindowId = wid; chrome.windows.onFocusChanged.emit(wid); }
+    if (id !== lastActiveTabId) {
+      lastActiveTabId = id; lastActiveUrl = url;
+      onActivated.emit({ tabId: id, windowId: wid });
+      refreshBadge();
+      return;
+    }
+    if (url !== lastActiveUrl) {
+      lastActiveUrl = url;
+      var tb = tab(t), d = { tabId: id, frameId: 0, parentFrameId: -1, url: url, timeStamp: Date.now() };
+      delete tabBadges[id]; refreshBadge();
+      onUpdated.emit(id, { status: "loading", url: url }, tb); onCommitted.emit(d);
+      onUpdated.emit(id, { status: "complete" }, tab(t)); onCompleted.emit(d);
+    }
+  }
+  setInterval(checkActiveTab, 1000);
   // Context menu support is intentionally omitted: legacy Safari menus are flat (no
   // submenus), which cannot express the extension's nested menu tree. The
   // chrome.contextMenus API stays as an inert stub and no "contextmenu" listener is

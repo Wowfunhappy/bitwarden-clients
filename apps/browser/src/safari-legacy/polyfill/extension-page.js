@@ -39,6 +39,10 @@
     var cm = doc.getElementById("context-menu");
     hide(cm && cm.closest ? cm.closest(".box-content-row") : null);
     hide(doc.getElementById("context-menuHelp"));
+    // The inline autofill menu (overlay on page form fields) is not functional in
+    // this port and is unwanted; hide its settings block.
+    var ov = doc.getElementById("autofill-overlay-settings");
+    hide(ov && ov.closest ? ov.closest(".box") : null);
   }
   function watchUi() {
     applyUiFixes();
