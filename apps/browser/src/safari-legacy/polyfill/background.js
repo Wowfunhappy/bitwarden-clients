@@ -433,11 +433,30 @@
     refreshBadge();
   });
   onAppEvent("navigate", function (e) { if (e.target && e.target.browserWindow) emitNavigation(e.target, e.target.url || "", true); });
+  // A dismissed popover (focus loss or the user clicking away) fires no application
+  // event, but a single-action popout waiting inside it — e.g. a fido2 assertion
+  // prompting to unlock a locked vault — must not hang the requesting page. Watch
+  // the popover's visibility and, when it disappears while a popout is live, emulate
+  // the window closing so the flow aborts cleanly (the site gets a rejection, not a
+  // spinner forever). Normal completion clears popoverPopouts first (windows.remove),
+  // so this only fires on genuine dismissal.
+  var popoverWasVisible = false;
+  function checkPopoverDismissed() {
+    var po = popoverEl(), visible = !!(po && po.visible);
+    if (popoverWasVisible && !visible) {
+      var ids = Object.keys(popoverPopouts);
+      if (ids.length) {
+        ids.forEach(function (id) { delete popoverPopouts[id]; chrome.windows.onRemoved.emit(Number(id)); });
+        restorePopover();
+      }
+    }
+    popoverWasVisible = visible;
+  }
   // Backstop poller (global-page timers verified to run at full rate in this host).
   // It covers what neither application events nor content-script reports see:
   // pages without content scripts (Top Sites, blank tabs) and SPA pushState
   // navigations. All sources dedupe through the emitters above.
-  setInterval(checkActiveTab, 1000);
+  setInterval(function () { checkActiveTab(); checkPopoverDismissed(); }, 1000);
   // Legacy popovers persist between opens, but the popup app assumes Chrome's popup
   // lifecycle — a fresh page on every open that inspects the active tab at boot —
   // so a re-shown popover keeps showing whatever tab it booted against. Reload it
