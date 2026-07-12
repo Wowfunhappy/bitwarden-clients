@@ -54,6 +54,14 @@
     // Safari tabs need an absolute URL.
     if (u == null || u === "") return u;
     u = String(u);
+    // Repair extension URLs whose authority was case-mangled: the app round-trips
+    // popout URLs through new URL(...).toString() (buildPopoutUrl), and WHATWG
+    // normalization can lowercase the "com.bitwarden.safari-TEAMID" authority.
+    // Safari resolves safari-extension:// URLs case-sensitively and shows
+    // "Safari can't open the page" for the lowercased form.
+    if (u.length >= base.length && u.slice(0, base.length).toLowerCase() === base.toLowerCase()) {
+      return base + u.slice(base.length);
+    }
     return /^[a-z][a-z0-9+.\-]*:/i.test(u) ? u : base + u.replace(/^\//, "");
   }
   function urlMatches(url, pattern) {
