@@ -26,23 +26,12 @@
 
   // UI adjustments for the legacy runtime, applied continuously since the popup is a
   // single-page app that re-renders routes. The illustrations that stock CSS supplies
-  // via content:url() on <img> and the popout button (legacy Safari cannot load
-  // extension pages in tabs; v1.41.0 shipped popOut() as a no-op) are hidden by rules
-  // the packaging step appends to popup/main.css. Here:
-  // - Hide header sections that only held the popout button, so the search field
-  //   keeps its original inset instead of running against the window edge.
-  // - Hide the context menu setting, because context menu support is omitted from
-  //   this port (legacy Safari menus cannot express the nested menu tree).
+  // via content:url() on <img> are hidden by rules the packaging step appends to
+  // popup/main.css. Here: hide the context menu setting, because context menu support
+  // is omitted from this port (legacy Safari menus cannot express the nested menu tree).
   var doc = g.document;
   function applyUiFixes() {
     function hide(el) { if (el && el.style.display !== "none") el.style.display = "none"; }
-    Array.prototype.forEach.call(doc.querySelectorAll("header .left, header .right"), function (el) {
-      var kids = el.children, onlyPopout = kids.length > 0;
-      for (var i = 0; i < kids.length; i++) {
-        if (kids[i].tagName.toLowerCase() !== "app-pop-out") { onlyPopout = false; break; }
-      }
-      if (onlyPopout) hide(el);
-    });
     var cm = doc.getElementById("context-menu");
     hide(cm && cm.closest ? cm.closest(".box-content-row") : null);
     hide(doc.getElementById("context-menuHelp"));
