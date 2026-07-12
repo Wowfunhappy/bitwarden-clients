@@ -39,13 +39,20 @@
     "https://bitwarden.github.io/phishing-test-page/inf-load/",
   ]);
 
-  function log(msg) { try { console.info("[bw-phishing] " + msg); } catch (_) {} }
+  function log(msg) {
+    try {
+      console.info("[bw-phishing] " + msg);
+    } catch (_) {}
+  }
 
   function loadBlocklist() {
     // Fetch in the global page (goes through the host's TLS stack). Fail open: if the
     // list can't be loaded, navigation is never blocked.
     g.fetch(BLOCKLIST_URL, { cache: "no-cache" })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
       .then(function (text) {
         var set = new Set();
         var lines = text.split("\n");
@@ -74,9 +81,11 @@
     }
     add(href);
     var swapped =
-      href.indexOf("https://") === 0 ? "http://" + href.slice(8)
-      : href.indexOf("http://") === 0 ? "https://" + href.slice(7)
-      : null;
+      href.indexOf("https://") === 0
+        ? "http://" + href.slice(8)
+        : href.indexOf("http://") === 0
+          ? "https://" + href.slice(7)
+          : null;
     if (swapped) add(swapped);
     return variants;
   }
@@ -110,14 +119,20 @@
             var x = new URL(u);
             return x.host + x.pathname.replace(/\/+$/, "") + x.search;
           } catch (e) {
-            return String(u).replace(/^https?:\/\//, "").replace(/\/+$/, "");
+            return String(u)
+              .replace(/^https?:\/\//, "")
+              .replace(/\/+$/, "");
           }
         }
         if (pageKey(location.href) !== pageKey(data.url)) {
           try {
             console.warn(
-              "[bw-phishing] suppressed stale warning (src=" + data.source + "): flagged " +
-                data.url + " but this page is " + location.href,
+              "[bw-phishing] suppressed stale warning (src=" +
+                data.source +
+                "): flagged " +
+                data.url +
+                " but this page is " +
+                location.href,
             );
           } catch (_) {}
           return;
@@ -141,15 +156,19 @@
             '<div style="max-width:560px;margin:auto">' +
             '<div style="font-size:52px;line-height:1">&#9888;</div>' +
             '<h1 style="font-size:26px;margin:12px 0 8px">Phishing site blocked</h1>' +
-            "<p style=\"margin:0 0 6px\">Bitwarden identified this page as a known phishing site. " +
+            '<p style="margin:0 0 6px">Bitwarden identified this page as a known phishing site. ' +
             "Do not enter your passwords or personal information.</p>" +
             '<p style="margin:0 0 20px;opacity:.85;word-break:break-all;font-size:13px">' +
             esc(data.url) +
             "</p>" +
-            '<button id="' + ID + '_leave" style="background:#fff;color:#c62b2b;border:0;' +
+            '<button id="' +
+            ID +
+            '_leave" style="background:#fff;color:#c62b2b;border:0;' +
             'border-radius:6px;padding:12px 20px;font-size:16px;font-weight:600;cursor:pointer;margin:0 6px">' +
             "Get me out of here</button>" +
-            '<button id="' + ID + '_ignore" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);' +
+            '<button id="' +
+            ID +
+            '_ignore" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);' +
             'border-radius:6px;padding:12px 20px;font-size:14px;cursor:pointer;margin:0 6px">' +
             "Ignore warning</button>" +
             '<p style="margin:22px 0 0;opacity:.7;font-size:12px">Protected by Bitwarden</p>' +
@@ -157,11 +176,17 @@
           return host;
         }
         function leave() {
-          if (history.length > 1) { history.back(); } else { location.replace("about:blank"); }
+          if (history.length > 1) {
+            history.back();
+          } else {
+            location.replace("about:blank");
+          }
         }
         function dismiss() {
           teardown();
-          try { chrome.runtime.sendMessage({ command: "bwPhishingIgnore", url: data.url }); } catch (_) {}
+          try {
+            chrome.runtime.sendMessage({ command: "bwPhishingIgnore", url: data.url });
+          } catch (_) {}
         }
         function wire() {
           document.getElementById(ID + "_leave").addEventListener("click", leave);
@@ -203,7 +228,12 @@
       log("overlay injection failed: " + e);
     }
     if (attempt < 4) {
-      g.setTimeout(function () { injectOverlay(tabId, url, attempt + 1, source); }, 300 + attempt * 400);
+      g.setTimeout(
+        function () {
+          injectOverlay(tabId, url, attempt + 1, source);
+        },
+        300 + attempt * 400,
+      );
     }
   }
 

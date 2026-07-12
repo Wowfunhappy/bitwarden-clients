@@ -1,8 +1,10 @@
 (function (g) {
   if (g.chrome && g.chrome.__bitwardenSafariLegacy) return;
   var b = safari.extension.globalPage && safari.extension.globalPage.contentWindow;
-  if (!b || !b.__bwLegacyChrome) throw new Error("Bitwarden Safari legacy background page is unavailable");
-  g.chrome = b.__bwLegacyChrome; g.browser = g.chrome;
+  if (!b || !b.__bwLegacyChrome)
+    throw new Error("Bitwarden Safari legacy background page is unavailable");
+  g.chrome = b.__bwLegacyChrome;
+  g.browser = g.chrome;
 
   // macOS Safari does not move keyboard focus to a <button> when it is clicked, so
   // clicking a button never blurs the text field that currently holds focus. Angular
@@ -16,9 +18,12 @@
       var active = g.document.activeElement;
       if (!active || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
       var target = e.target;
-      var actionable = target && target.closest && target.closest("button, a[href], [role='button']");
+      var actionable =
+        target && target.closest && target.closest("button, a[href], [role='button']");
       if (actionable && actionable !== active) {
-        try { active.blur(); } catch (_) {}
+        try {
+          active.blur();
+        } catch (_) {}
       }
     },
     true,
@@ -44,9 +49,13 @@
         var t = tabs && tabs[0];
         cb(t ? t.id + "|" + (t.url || "") : null);
       });
-    } catch (_) { cb(null); }
+    } catch (_) {
+      cb(null);
+    }
   }
-  currentTabKey(function (key) { g.__bwBootTabKey = key; });
+  currentTabKey(function (key) {
+    g.__bwBootTabKey = key;
+  });
   g.document.addEventListener("visibilitychange", function () {
     if (g.document.hidden || !g.__bwBootTabKey) return;
     currentTabKey(function (key) {
@@ -56,7 +65,9 @@
 
   var doc = g.document;
   function applyUiFixes() {
-    function hide(el) { if (el && el.style.display !== "none") el.style.display = "none"; }
+    function hide(el) {
+      if (el && el.style.display !== "none") el.style.display = "none";
+    }
     var cm = doc.getElementById("context-menu");
     hide(cm && cm.closest ? cm.closest(".box-content-row") : null);
     hide(doc.getElementById("context-menuHelp"));
@@ -67,7 +78,10 @@
   }
   function watchUi() {
     applyUiFixes();
-    new MutationObserver(applyUiFixes).observe(doc.documentElement, { childList: true, subtree: true });
+    new MutationObserver(applyUiFixes).observe(doc.documentElement, {
+      childList: true,
+      subtree: true,
+    });
   }
   if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", watchUi);
   else watchUi();
