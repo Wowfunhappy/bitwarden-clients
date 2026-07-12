@@ -45,6 +45,8 @@ import { Messenger } from "./messaging/messenger";
       } as any;
       globalContext.AuthenticatorAttestationResponse =
         class PolyfillAuthenticatorAttestationResponse {} as any;
+      globalContext.AuthenticatorAssertionResponse =
+        class PolyfillAuthenticatorAssertionResponse {} as any;
     } catch {
       /* empty */
     }
