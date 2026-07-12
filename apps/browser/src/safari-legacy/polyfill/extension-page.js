@@ -33,6 +33,27 @@
   // popouts are hosted in the toolbar popover instead. Here: hide the context menu
   // setting, because context menu support is omitted from this port (legacy Safari
   // menus cannot express the nested menu tree).
+  // Record which tab/URL this page booted against. The persistent popover only
+  // shows correct per-tab content for the tab it booted on (the app assumes
+  // Chrome's fresh-page-per-open popup lifecycle), so the background reloads it on
+  // re-show over a different tab — and the visibilitychange listener below is a
+  // fallback trigger for the same check.
+  function currentTabKey(cb) {
+    try {
+      g.chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        var t = tabs && tabs[0];
+        cb(t ? t.id + "|" + (t.url || "") : null);
+      });
+    } catch (_) { cb(null); }
+  }
+  currentTabKey(function (key) { g.__bwBootTabKey = key; });
+  g.document.addEventListener("visibilitychange", function () {
+    if (g.document.hidden || !g.__bwBootTabKey) return;
+    currentTabKey(function (key) {
+      if (key && key !== g.__bwBootTabKey) g.location.reload();
+    });
+  });
+
   var doc = g.document;
   function applyUiFixes() {
     function hide(el) { if (el && el.style.display !== "none") el.style.display = "none"; }

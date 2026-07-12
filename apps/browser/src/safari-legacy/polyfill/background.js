@@ -241,7 +241,9 @@
             po.contentURL = u;
             if (item && item.showPopover) item.showPopover();
             var id = popoutSequence++;
-            popoverPopouts[id] = true;
+            // Track only single-action popouts (the ones windows.remove will close);
+            // fire-and-forget pages routed here by tabs.create are not sessions.
+            if (u.indexOf("uilocation=popout") >= 0) popoverPopouts[id] = true;
             return done(cb, { id: id, focused: true, type: "popup", state: "normal", alwaysOnTop: false, incognito: false });
           }
         }
@@ -412,6 +414,29 @@
   // heavy DOM-timer throttling in modern WebKit, so this can be minutes late — the
   // content-script reports above are the primary signal.
   setInterval(checkActiveTab, 1000);
+  // Legacy popovers persist between opens, but the popup app assumes Chrome's popup
+  // lifecycle — a fresh page on every open that inspects the active tab at boot —
+  // so a re-shown popover keeps showing whatever tab it booted against. Reload it
+  // when it opens somewhere else (uBlock's port reloads on every 'popover' event
+  // for the same reason; the boot key lets same-tab reopens stay instant). The
+  // extension-page bridge records __bwBootTabKey when the popup boots.
+  onAppEvent("popover", function (e) {
+    var po = (e.target && e.target.contentWindow ? e.target : null) || (ext.popovers || [])[0];
+    if (!po || !po.contentWindow) return;
+    if (String(po.contentURL || "").indexOf("uilocation=popout") >= 0) {
+      // A live single-action popout owns the popover; a stale one (its session was
+      // never closed via windows.remove) is swapped back for the normal popup.
+      if (Object.keys(popoverPopouts).length) return;
+      po.contentURL = base + "popup/index.html";
+      return;
+    }
+    var t = active(), key = t ? tabId(t) + "|" + (t.url || "") : null;
+    var bootKey = null;
+    try { bootKey = po.contentWindow.__bwBootTabKey; } catch (_) {}
+    if (key && bootKey && key !== bootKey) {
+      try { po.contentWindow.location.reload(); } catch (_) {}
+    }
+  });
   // Context menu support is intentionally omitted: legacy Safari menus are flat (no
   // submenus), which cannot express the extension's nested menu tree. The
   // chrome.contextMenus API stays as an inert stub and no "contextmenu" listener is
