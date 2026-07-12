@@ -302,7 +302,19 @@
     privacy: { services: {} }, offscreen: { createDocument: function () { return Promise.resolve(); }, closeDocument: function () { return Promise.resolve(); }, hasDocument: function () { return Promise.resolve(false); } }
   };
   chrome.action = chrome.browserAction;
-  chrome.scripting = { executeScript: function (d, cb) { return chrome.tabs.executeScript(d.target.tabId, { file: d.files && d.files[0] }, cb); },
+  chrome.scripting = { executeScript: function (d, cb) {
+      // Callers (e.g. the registerContentScriptsMv2 polyfill injecting the FIDO2
+      // page-script appender plus its content script) pass several files that must
+      // all run, in order.
+      var target = (d && d.target) || {};
+      var frameId = target.frameIds && target.frameIds.length ? target.frameIds[0] : undefined;
+      var files = ((d && d.files) || []).map(function (f) { return typeof f === "string" ? f : f && f.file; }).filter(Boolean);
+      var chain = Promise.resolve();
+      files.forEach(function (f) {
+        chain = chain.then(function () { return chrome.tabs.executeScript(target.tabId, { file: f, frameId: frameId }); });
+      });
+      return chain.then(function () { var r = [{ frameId: frameId || 0, result: null }]; if (cb) cb(r); return r; });
+    },
     insertCSS: function (d, cb) { return chrome.tabs.insertCSS(d.target.tabId, { file: d.files && d.files[0], code: d.css }, cb); },
     registerContentScripts: function () { return Promise.resolve(); }, unregisterContentScripts: function () { return Promise.resolve(); }, getRegisteredContentScripts: function () { return Promise.resolve([]); } };
   ["autofillAddressEnabled", "autofillCreditCardEnabled", "passwordSavingEnabled"].forEach(function (n) { chrome.privacy.services[n] = {
