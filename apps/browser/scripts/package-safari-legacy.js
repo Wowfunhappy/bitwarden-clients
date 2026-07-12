@@ -24,13 +24,22 @@ function injectBridge(directory) {
     if (entry.isDirectory()) {
       injectBridge(file);
     } else if (entry.name.endsWith(".html")) {
-      const bridge = entry.name === "background.html" ? "background.js" : "extension-page.js";
-      const relative = path.relative(path.dirname(file), path.join(extension, "safari-legacy", bridge)).split(path.sep).join("/");
+      const isBackground = entry.name === "background.html";
+      const bridge = isBackground ? "background.js" : "extension-page.js";
       let html = fs.readFileSync(file, "utf8");
-      if (!html.includes("safari-legacy/extension-page.js")) {
-        html = html.replace("<head>", `<head><script src="${relative}"></script>`);
-        fs.writeFileSync(file, html);
+      if (html.includes("safari-legacy/" + bridge)) {
+        return; // already injected
       }
+      const rel = (name) =>
+        path.relative(path.dirname(file), path.join(extension, "safari-legacy", name)).split(path.sep).join("/");
+      // The global page also loads the phishing-detection service (after the bridge
+      // installs `chrome`); other extension pages only need the API bridge.
+      const scripts = [rel(bridge)]
+        .concat(isBackground ? [rel("phishing-detection.js")] : [])
+        .map((src) => `<script src="${src}"></script>`)
+        .join("");
+      html = html.replace("<head>", `<head>${scripts}`);
+      fs.writeFileSync(file, html);
     }
   });
 }

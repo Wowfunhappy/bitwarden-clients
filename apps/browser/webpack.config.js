@@ -263,7 +263,10 @@ const mainConfig = {
     minimize: ENV !== "development",
     minimizer: [
       new TerserPlugin({
-        exclude: [/content\/.*/, /notification\/.*/, /overlay\/.*/],
+        // safari-legacy: the verbatim-copied polyfill ships unminified — one file
+        // serializes a function via .toString() to inject it, which minification could
+        // subtly break, and unminified matches the validated hand-assembled bundle.
+        exclude: [/content\/.*/, /notification\/.*/, /overlay\/.*/, /safari-legacy\/.*/],
         terserOptions: {
           // Replicate Angular CLI behaviour
           compress: {

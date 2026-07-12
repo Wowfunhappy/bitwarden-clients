@@ -72,6 +72,19 @@ Vault access, sync, item management, password generation, page collection,
 autofill (including on-page-load), save prompts, tab/window operations, badges,
 alarms, and storage are bridged.
 
+**Phishing detection** (`polyfill/phishing-detection.js`). A self-contained port
+of Bitwarden's phishing protection, adapted to this environment. The global page
+fetches Bitwarden's public link blocklist
+(`https://assets.bitwarden.com/security/v1/link-blocklist.txt`, ~58k full URLs),
+keeps it in memory, and on each committed top-frame navigation matches the URL
+(same trailing-slash / http-https normalization as upstream). On a match it
+injects a full-page warning overlay into the tab via `executeScript` — because
+legacy Safari cannot navigate a tab to an extension warning page as upstream
+does. Enabled unconditionally; fails open if the blocklist can't be fetched.
+Note: matching is by exact URL, so it flags known phishing *links*, not whole
+domains, and with autofill-on-page-load a credential can be filled before the
+overlay appears (the overlay is a warning, not an autofill suppressor).
+
 **Passkeys / WebAuthn work.** Because this WebKit has no native WebAuthn,
 Bitwarden's own FIDO2 implementation serves as the authenticator: the page
 script defines the `PublicKeyCredential` / `Authenticator*Response` globals, the
