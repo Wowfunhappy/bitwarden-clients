@@ -39,11 +39,14 @@ injectBridge(extension);
 // Legacy-runtime UI fixes. The decorative illustrations (empty-state artwork, 2FA
 // provider logos) are supplied by CSS content:url() on <img>, which does not render
 // in this environment; hide them outright — the surrounding text carries the
-// meaning.
+// meaning. The popout button is hidden because extension pages cannot run in
+// browser tabs (the web process has no globalPage access); internally-opened
+// popouts are hosted in the toolbar popover by the background bridge instead.
 const cssFixMarker = "/* safari-legacy ui fixes */";
 const cssFix = [
   cssFixMarker,
   '.no-items .no-items-image,.full-loading-spinner .no-items-image,img[class^="mfaType"]{display:none!important}',
+  "app-pop-out{display:none!important}",
 ].join("\n");
 const popupCss = path.join(extension, "popup", "main.css");
 if (fs.existsSync(popupCss) && !fs.readFileSync(popupCss, "utf8").includes(cssFixMarker)) {

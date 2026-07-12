@@ -80,6 +80,8 @@
   // Chrome badges are per-tab (and auto-clear on navigation); Safari has one badge
   // per toolbar item. Track per-tab values and surface the active tab's badge.
   var tabBadges = {}, globalBadge = "";
+  // Synthetic window ids for popouts hosted in the toolbar popover.
+  var popoutSequence = 9001, popoverPopouts = {};
   function refreshBadge() {
     var t = active(), id = t ? tabId(t) : null;
     var text = id != null && tabBadges[id] != null ? tabBadges[id] : globalBadge;
@@ -184,7 +186,19 @@
           !(q.windowId > 0 && winId(t.browserWindow) !== q.windowId) && !(q.url && !urlMatches(t.url || "", q.url));
       }).map(tab); return done(cb, a); },
       get: function (id, cb) { return done(cb, tab(findTab(id))); },
-      create: function (p, cb) { var w = app.activeBrowserWindow || app.openBrowserWindow(), t = w.openTab(); t.url = resolveUrl(p.url) || "about:blank"; if (p.active !== false) t.activate(); return done(cb, tab(t)); },
+      create: function (p, cb) {
+        var u = resolveUrl(p && p.url) || "about:blank";
+        if (u.indexOf(origin) === 0) {
+          // Extension pages cannot run in tabs (no globalPage access there); host
+          // them in the toolbar popover via the windows.create path.
+          return chrome.windows.create({ url: u }).then(function (w) {
+            var t = { id: popoutSequence++, index: 0, windowId: w ? w.id : -1, active: true, selected: true,
+              highlighted: true, pinned: false, incognito: false, title: "Bitwarden", url: u, status: "complete" };
+            if (cb) cb(t); return t;
+          });
+        }
+        var w2 = app.activeBrowserWindow || app.openBrowserWindow(), t2 = w2.openTab(); t2.url = u; if (p.active !== false) t2.activate(); return done(cb, tab(t2));
+      },
       update: function (id, p, cb) { if (typeof id === "object") { cb = p; p = id; id = tabId(active()); } var t = findTab(id); if (t) { if (p.url) t.url = resolveUrl(p.url); if (p.active || p.highlighted) t.activate(); } return done(cb, tab(t)); },
       remove: function (q, cb) { (Array.isArray(q) ? q : [q]).forEach(function (id) { var t = findTab(id); if (t) t.close(); }); return done(cb); },
       reload: function (id, _, cb) { var t = findTab(typeof id === "number" ? id : tabId(active())); if (t) t.url = t.url; return done(cb); },
@@ -199,9 +213,38 @@
       getCurrent: function (o, cb) { if (typeof o === "function") { cb = o; o = {}; } return done(cb, win(app.activeBrowserWindow, o && o.populate)); },
       get: function (id, o, cb) { if (typeof o === "function") { cb = o; o = {}; } return done(cb, win(app.browserWindows[id - 1], o && o.populate)); },
       getAll: function (o, cb) { return done(cb, app.browserWindows.map(function (w) { return win(w, o && o.populate); })); },
-      create: function (d, cb) { var w = app.openBrowserWindow(); if (d && d.url) w.activeTab.url = resolveUrl(Array.isArray(d.url) ? d.url[0] : d.url); return done(cb, win(w, true)); },
-      update: function (id, d, cb) { var w = app.browserWindows[id - 1]; if (w && d.focused) w.activeTab.activate(); return done(cb, win(w, true)); },
-      remove: function (id, cb) { var w = app.browserWindows[id - 1]; if (w) w.close(); return done(cb); } },
+      create: function (d, cb) {
+        var u = d && d.url ? resolveUrl(Array.isArray(d.url) ? d.url[0] : d.url) : null;
+        // Extension pages cannot run in browser tabs: tab content lives in the web
+        // process, which has no access to safari.extension.globalPage, and the app
+        // requires direct background-window access (getBgService). Host "popout"
+        // windows (unlock prompts, SSO results, passkey confirmations) in the
+        // toolbar popover instead — the one context where the full app runs.
+        if (u && u.indexOf(origin) === 0) {
+          var po = (ext.popovers || [])[0], item = (ext.toolbarItems || [])[0];
+          if (po) {
+            if (d.width) { try { po.width = d.width; } catch (_) {} }
+            if (d.height) { try { po.height = d.height; } catch (_) {} }
+            po.contentURL = u;
+            if (item && item.showPopover) item.showPopover();
+            var id = popoutSequence++;
+            popoverPopouts[id] = true;
+            return done(cb, { id: id, focused: true, type: "popup", state: "normal", alwaysOnTop: false, incognito: false });
+          }
+        }
+        var w = app.openBrowserWindow(); if (u) w.activeTab.url = u; return done(cb, win(w, true));
+      },
+      update: function (id, d, cb) { if (popoverPopouts[id]) return done(cb, null); var w = app.browserWindows[id - 1]; if (w && d.focused) w.activeTab.activate(); return done(cb, win(w, true)); },
+      remove: function (id, cb) {
+        if (popoverPopouts[id]) {
+          delete popoverPopouts[id];
+          var po = (ext.popovers || [])[0];
+          if (po) { try { po.hide(); } catch (_) {} po.contentURL = base + "popup/index.html"; }
+          chrome.windows.onRemoved.emit(id);
+          return done(cb);
+        }
+        var w = app.browserWindows[id - 1]; if (w) w.close(); return done(cb);
+      } },
     i18n: { getUILanguage: function () { return navigator.language || "en"; },
       // Chrome semantics: name lookup is case-insensitive; messages may contain
       // named $PLACEHOLDER$ references whose "content" maps $1..$9 to substitutions.
