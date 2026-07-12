@@ -97,6 +97,24 @@
     },
   };
   g.chrome = chrome; g.browser = chrome;
+
+  // Tab-state reporter. The hosting browser does not reliably surface tab switches
+  // or navigations to the global page (application events and hidden-page timers
+  // both proved unreliable), but content-script messages are delivered immediately —
+  // uBlock's legacy port tracks tabs the same way. Only the top frame reports.
+  if (g === g.top) {
+    var reportTab = function (kind) {
+      try { safari.self.tab.dispatchMessage("bw.legacy.tab", { kind: kind, url: g.location.href }); } catch (_) {}
+    };
+    reportTab("load");
+    g.addEventListener("focus", function () { reportTab("focus"); });
+    g.addEventListener("pageshow", function () { reportTab("load"); });
+    g.addEventListener("hashchange", function () { reportTab("nav"); });
+    g.addEventListener("popstate", function () { reportTab("nav"); });
+    g.document.addEventListener("visibilitychange", function () {
+      if (!g.document.hidden) reportTab("focus");
+    });
+  }
   safari.self.addEventListener("message", function (e) {
     var p = e.message || {};
     if (e.name === "bw.legacy.response" && pending[p.requestId]) pending[p.requestId](p.response);

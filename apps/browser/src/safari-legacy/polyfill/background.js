@@ -343,64 +343,74 @@
         function (m) { send(e.target, "bw.legacy.port", { portId: p.portId, message: m }); },
         function () { send(e.target, "bw.legacy.port", { portId: p.portId, disconnect: true }); delete ports[p.portId]; }); ports[p.portId] = port; onConnect.emit(port); }
     } else if (e.name === "bw.legacy.port" && ports[p.portId]) { if (p.disconnect) { ports[p.portId].onDisconnect.emit(ports[p.portId]); delete ports[p.portId]; } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]); }
+    else if (e.name === "bw.legacy.tab" && e.target && e.target.browserWindow) {
+      // Tab-state reports from the content bridge (see content.js). This is the one
+      // signal channel proven reliable in the hosting browser — uBlock's legacy port
+      // tracks tabs the same way.
+      if (p.kind === "focus") { emitActivation(e.target); emitNavigation(e.target, e.target.url || p.url || "", false); }
+      else emitNavigation(e.target, p.url || e.target.url || "", true);
+    }
   }, false);
-  // Register tab events in BOTH phases: uBlock's working legacy port listens in the
-  // bubble phase, while capture-phase-only registration coincided with these events
-  // never arriving here. The seen-flag keeps a doubly-delivered event from running
-  // the handler twice.
+  // Tab-state tracking. All sources — Safari's application events, content-script
+  // reports, and the poller — funnel through these two emitters, whose per-tab
+  // snapshots make duplicate deliveries harmless.
+  var lastActiveTabId = null, lastWindowId = null, tabUrls = {};
+  function emitActivation(t) {
+    if (!t || !t.browserWindow) return;
+    var id = tabId(t), wid = winId(t.browserWindow);
+    if (wid !== lastWindowId) { lastWindowId = wid; chrome.windows.onFocusChanged.emit(wid); }
+    if (id === lastActiveTabId) return;
+    lastActiveTabId = id;
+    onActivated.emit({ tabId: id, windowId: wid });
+    refreshBadge();
+  }
+  function emitNavigation(t, url, force) {
+    // force=true marks a real navigation signal (Safari navigate event, content
+    // script load/nav report): emit even for a same-URL reload unless an identical
+    // report arrived moments ago (double delivery of one navigation). Unforced
+    // sources (poller, focus reports) emit only when the URL actually changed.
+    if (!t) return;
+    var id = tabId(t);
+    url = url || t.url || "";
+    if (!url) return;
+    var prev = tabUrls[id], now = Date.now();
+    if (prev && prev.url === url && (!force || now - prev.time < 1500)) return;
+    tabUrls[id] = { url: url, time: now };
+    var tb = tab(t), d = { tabId: id, frameId: 0, parentFrameId: -1, url: url, timeStamp: now };
+    delete tabBadges[id]; refreshBadge();
+    onUpdated.emit(id, { status: "loading", url: url }, tb); onCommitted.emit(d);
+    setTimeout(function () { onUpdated.emit(id, { status: "complete" }, tab(t)); onCompleted.emit(d); }, 0);
+  }
+  function checkActiveTab() {
+    var t = active(); if (!t) return;
+    emitActivation(t);
+    emitNavigation(t, t.url || "", false);
+  }
+  // Register the application-level tab events in BOTH phases (delivery phase differs
+  // between hosts). Dedupe via WeakSet — an expando write would throw under strict
+  // mode if the host's event wrappers are non-extensible, killing the handler.
   function onAppEvent(name, fn) {
-    var handler = function (e) { if (e.__bwHandled) return; e.__bwHandled = true; fn(e); };
+    var seen = typeof WeakSet === "function" ? new WeakSet() : null;
+    var handler = function (e) {
+      if (seen) { try { if (seen.has(e)) return; seen.add(e); } catch (_) {} }
+      fn(e);
+    };
     app.addEventListener(name, handler, false);
     app.addEventListener(name, handler, true);
   }
   onAppEvent("activate", function (e) {
-    if (e.target && e.target.browserWindow) {
-      noteActiveTab(e.target);
-      onActivated.emit({ tabId: tabId(e.target), windowId: winId(e.target.browserWindow) });
-    }
+    if (e.target && e.target.browserWindow) emitActivation(e.target);
     refreshBadge();
   });
-  onAppEvent("navigate", function (e) { var t = tab(e.target), d = { tabId: t.id, frameId: 0, parentFrameId: -1, url: t.url, timeStamp: Date.now() };
-    if (active() === e.target) { lastActiveTabId = t.id; lastActiveUrl = t.url || ""; }
-    delete tabBadges[t.id]; refreshBadge();
-    onUpdated.emit(t.id, { status: "loading", url: t.url }, t); onCommitted.emit(d); setTimeout(function () { onUpdated.emit(t.id, { status: "complete" }, tab(e.target)); onCompleted.emit(d); }, 0); });
-  // "navigate" was unreliable even in genuine legacy Safari (uBlock's port avoided it,
-  // tracking pushState from content scripts instead); "beforeNavigate" is the
-  // better-supported signal, so use it as an additional navigation source. The
-  // poller's snapshot comparison deduplicates whichever arrives first.
+  onAppEvent("navigate", function (e) { if (e.target && e.target.browserWindow) emitNavigation(e.target, e.target.url || "", true); });
   onAppEvent("beforeNavigate", function (e) {
-    if (!e.target || !e.target.browserWindow || !e.url) return;
-    setTimeout(function () { checkActiveTab(); }, 0);
-    setTimeout(function () { checkActiveTab(); }, 250);
+    if (!e.target || !e.target.browserWindow) return;
+    setTimeout(checkActiveTab, 0);
+    setTimeout(checkActiveTab, 250);
   });
-  // Safari's "activate"/"navigate" events are not reliably delivered in every host,
-  // and everything downstream (badge counts, the popup's current-tab view, dynamic
-  // content-script registration) is keyed off Chrome's tab events. Poll the active
-  // tab as a fallback and synthesize the events Safari failed to send; the real
-  // listeners above keep these snapshots current, so nothing double-fires.
-  var lastActiveTabId = null, lastActiveUrl = null, lastWindowId = null;
-  function noteActiveTab(t) {
-    lastActiveTabId = tabId(t); lastActiveUrl = t.url || "";
-    if (t.browserWindow) lastWindowId = winId(t.browserWindow);
-  }
-  function checkActiveTab() {
-    var t = active(); if (!t) return;
-    var id = tabId(t), wid = winId(t.browserWindow), url = t.url || "";
-    if (wid !== lastWindowId) { lastWindowId = wid; chrome.windows.onFocusChanged.emit(wid); }
-    if (id !== lastActiveTabId) {
-      lastActiveTabId = id; lastActiveUrl = url;
-      onActivated.emit({ tabId: id, windowId: wid });
-      refreshBadge();
-      return;
-    }
-    if (url !== lastActiveUrl) {
-      lastActiveUrl = url;
-      var tb = tab(t), d = { tabId: id, frameId: 0, parentFrameId: -1, url: url, timeStamp: Date.now() };
-      delete tabBadges[id]; refreshBadge();
-      onUpdated.emit(id, { status: "loading", url: url }, tb); onCommitted.emit(d);
-      onUpdated.emit(id, { status: "complete" }, tab(t)); onCompleted.emit(d);
-    }
-  }
+  // Last-resort poller. Note that hidden pages (like this global page) may receive
+  // heavy DOM-timer throttling in modern WebKit, so this can be minutes late — the
+  // content-script reports above are the primary signal.
   setInterval(checkActiveTab, 1000);
   // Context menu support is intentionally omitted: legacy Safari menus are flat (no
   // submenus), which cannot express the extension's nested menu tree. The
