@@ -46,7 +46,9 @@ const cssFixMarker = "/* safari-legacy ui fixes */";
 const cssFix = [
   cssFixMarker,
   '.no-items .no-items-image,.full-loading-spinner .no-items-image,img[class^="mfaType"]{display:none!important}',
-  "app-pop-out{display:none!important}",
+  // visibility (not display) so the button's box keeps holding its layout slot and
+  // neighboring elements (the search field) keep their original inset.
+  "app-pop-out{visibility:hidden!important}",
 ].join("\n");
 const popupCss = path.join(extension, "popup", "main.css");
 if (fs.existsSync(popupCss) && !fs.readFileSync(popupCss, "utf8").includes(cssFixMarker)) {

@@ -26,24 +26,16 @@
 
   // UI adjustments for the legacy runtime, applied continuously since the popup is a
   // single-page app that re-renders routes. The illustrations that stock CSS supplies
-  // via content:url() on <img> and the popout button are hidden by rules the packaging
-  // step appends to popup/main.css (extension pages cannot run in browser tabs: the
-  // web process has no globalPage access, so a "full window" popout is impossible —
-  // internally-opened popouts are hosted in the toolbar popover instead). Here:
-  // - Hide header sections that only held the popout button, so the search field
-  //   keeps its original inset instead of running against the window edge.
-  // - Hide the context menu setting, because context menu support is omitted from
-  //   this port (legacy Safari menus cannot express the nested menu tree).
+  // via content:url() on <img> are hidden and the popout button is made invisible
+  // (visibility:hidden, so its box keeps holding the header layout together) by rules
+  // the packaging step appends to popup/main.css — extension pages cannot run in
+  // browser tabs (the web process has no globalPage access), so internally-opened
+  // popouts are hosted in the toolbar popover instead. Here: hide the context menu
+  // setting, because context menu support is omitted from this port (legacy Safari
+  // menus cannot express the nested menu tree).
   var doc = g.document;
   function applyUiFixes() {
     function hide(el) { if (el && el.style.display !== "none") el.style.display = "none"; }
-    Array.prototype.forEach.call(doc.querySelectorAll("header .left, header .right"), function (el) {
-      var kids = el.children, onlyPopout = kids.length > 0;
-      for (var i = 0; i < kids.length; i++) {
-        if (kids[i].tagName.toLowerCase() !== "app-pop-out") { onlyPopout = false; break; }
-      }
-      if (onlyPopout) hide(el);
-    });
     var cm = doc.getElementById("context-menu");
     hide(cm && cm.closest ? cm.closest(".box-content-row") : null);
     hide(doc.getElementById("context-menuHelp"));
