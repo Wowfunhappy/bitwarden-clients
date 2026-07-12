@@ -106,6 +106,13 @@ export class Messenger {
 
   private createMessageEventListener() {
     return async (event: MessageEvent<MessageWithMetadata>) => {
+      // Backport of upstream bitwarden/clients #19329: ignore untrusted (script-
+      // synthesized) events so a page cannot forge FIDO2 messenger traffic by
+      // dispatching its own MessageEvent. Genuine postMessage delivery is isTrusted.
+      if (!event.isTrusted) {
+        return;
+      }
+
       const windowOrigin = window.location.origin;
       if (event.origin !== windowOrigin || !this.handler) {
         return;

@@ -120,6 +120,11 @@ import { MessageWithMetadata, Messenger } from "./messaging/messenger";
     requestId: string,
     messageData: InsecureCreateCredentialParams | InsecureAssertCredentialParams,
   ): Promise<Message | undefined> {
+    const featureName = permissionsPolicyFeatureForCommand(command);
+    if (featureName != null && !isWebAuthnFeatureAllowed(featureName)) {
+      return Promise.reject(buildPermissionsPolicyError(featureName));
+    }
+
     const data: CreateCredentialParams | AssertCredentialParams = {
       ...messageData,
       origin: globalContext.location.origin,
@@ -133,6 +138,62 @@ import { MessageWithMetadata, Messenger } from "./messaging/messenger";
     }
 
     return Promise.resolve({ type, result });
+  }
+
+  // Backport of upstream bitwarden/clients #21054 (PM-37768, "VULN - webauthn honor
+  // permissions policy"): only allow a WebAuthn ceremony when the document's
+  // Permissions Policy grants it. Runs in the isolated content-script world so its
+  // view of the policy and self/top cannot be tampered with by page script.
+  function permissionsPolicyFeatureForCommand(command: string): string | undefined {
+    if (command === "fido2RegisterCredentialRequest") {
+      return "publickey-credentials-create";
+    }
+    if (command === "fido2GetCredentialRequest") {
+      return "publickey-credentials-get";
+    }
+    return undefined;
+  }
+
+  // Prefers the standardized document.permissionsPolicy, falls back to the older
+  // document.featurePolicy. When neither exists (this WebKit, default Firefox), fall
+  // back to a defense-in-depth check: the spec default allowlist for
+  // publickey-credentials-* is `self`, so deny cross-origin iframes. This over-rejects
+  // iframes that legitimately received an allow= delegation, which we can't read
+  // without the policy API — the safe direction to err.
+  function isWebAuthnFeatureAllowed(featureName: string): boolean {
+    try {
+      const policyHolder = globalContext.document as Document & {
+        permissionsPolicy?: { allowsFeature(feature: string): boolean };
+        featurePolicy?: { allowsFeature(feature: string): boolean };
+      };
+      const policy = policyHolder.permissionsPolicy ?? policyHolder.featurePolicy;
+      if (policy != null && typeof policy.allowsFeature === "function") {
+        return policy.allowsFeature(featureName);
+      }
+    } catch {
+      // Fall through to the defense-in-depth check.
+    }
+
+    return !isCrossOriginIframe();
+  }
+
+  function isCrossOriginIframe(): boolean {
+    try {
+      if (globalContext.self === globalContext.top) {
+        return false;
+      }
+      return globalContext.top?.location.origin !== globalContext.self.location.origin;
+    } catch {
+      // SecurityError reading top.location → top is a different origin.
+      return true;
+    }
+  }
+
+  function buildPermissionsPolicyError(featureName: string): DOMException {
+    return new DOMException(
+      `The '${featureName}' feature is not enabled in this document. Permissions Policy may be used to delegate Web Authentication capabilities to cross-origin child frames.`,
+      "NotAllowedError",
+    );
   }
 
   /**
