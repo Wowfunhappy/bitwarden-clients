@@ -95,9 +95,14 @@
     chrome.runtime.onMessage.listeners.slice().forEach(function (fn) {
       try {
         var value = fn(message, sender || {}, respond);
+        // Chrome semantics: the response is delivered ONLY through sendResponse.
+        // Returning `true` keeps the channel open for an async sendResponse; a
+        // returned Promise resolves as the response (webextension-polyfill style).
+        // Any other return value (notably `false`/`null`, which listeners such as
+        // RuntimeBackground return to mean "not handling this") is IGNORED — using
+        // it as the response would clobber another listener's real sendResponse.
         if (value === true) waiting = true;
         else if (value && typeof value.then === "function") { waiting = true; value.then(respond, function () { respond(); }); }
-        else if (value !== undefined) respond(value);
       } catch (e) { chrome.runtime.lastError = { message: String(e) }; console.error(e); }
     });
     if (!answered && !waiting) respond();

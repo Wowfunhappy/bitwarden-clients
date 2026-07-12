@@ -121,8 +121,12 @@
     else if (e.name === "bw.legacy.runtime" && p.kind === "message") {
       var answered = false, waiting = false;
       function reply(value) { if (answered) return; answered = true; safari.self.tab.dispatchMessage("bw.legacy.runtime", { kind: "response", requestId: p.requestId, response: value }); }
+      // Chrome semantics: only sendResponse delivers a response; `true` keeps the
+      // channel open for it and a returned Promise resolves as it. A plain return
+      // value (e.g. `false`/`null` for "not handling this") is ignored so it cannot
+      // clobber another listener's real sendResponse.
       onMessage.listeners.slice().forEach(function (fn) { var v = fn(p.message, {}, reply); if (v === true) waiting = true;
-        else if (v && typeof v.then === "function") { waiting = true; v.then(reply, function () { reply(); }); } else if (v !== undefined) reply(v); });
+        else if (v && typeof v.then === "function") { waiting = true; v.then(reply, function () { reply(); }); } });
       if (!answered && !waiting) reply();
     } else if (e.name === "bw.legacy.port" && ports[p.portId]) {
       if (p.disconnect) { ports[p.portId].onDisconnect.emit(ports[p.portId]); delete ports[p.portId]; } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]);
