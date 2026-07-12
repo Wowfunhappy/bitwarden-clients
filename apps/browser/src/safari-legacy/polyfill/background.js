@@ -405,11 +405,6 @@
     refreshBadge();
   });
   onAppEvent("navigate", function (e) { if (e.target && e.target.browserWindow) emitNavigation(e.target, e.target.url || "", true); });
-  onAppEvent("beforeNavigate", function (e) {
-    if (!e.target || !e.target.browserWindow) return;
-    setTimeout(checkActiveTab, 0);
-    setTimeout(checkActiveTab, 250);
-  });
   // Last-resort poller. Note that hidden pages (like this global page) may receive
   // heavy DOM-timer throttling in modern WebKit, so this can be minutes late — the
   // content-script reports above are the primary signal.
