@@ -80,8 +80,23 @@
   // Chrome badges are per-tab (and auto-clear on navigation); Safari has one badge
   // per toolbar item. Track per-tab values and surface the active tab's badge.
   var tabBadges = {}, globalBadge = "";
-  // Synthetic window ids for popouts hosted in the toolbar popover.
+  // Synthetic window ids for popouts hosted in the toolbar popover, keyed by id to
+  // { url }. The popover is a persistent, single instance, so only one is live.
   var popoutSequence = 9001, popoverPopouts = {};
+  var POPUP_DEFAULT_URL = base + "popup/index.html", POPUP_W = 375, POPUP_H = 600;
+  function popoverEl() { return (ext.popovers || [])[0]; }
+  function popoverGo(u) {
+    var po = popoverEl(); if (!po) return;
+    po.contentURL = u;
+    // The popover keeps its document between opens, so a contentURL change alone may
+    // not navigate the already-loaded page; drive its live location too.
+    try { if (po.contentWindow && po.contentWindow.location) po.contentWindow.location.replace(u); } catch (_) {}
+  }
+  function restorePopover() {
+    var po = popoverEl(); if (!po) return;
+    try { po.width = POPUP_W; po.height = POPUP_H; } catch (_) {}
+    popoverGo(POPUP_DEFAULT_URL);
+  }
   function refreshBadge() {
     var t = active(), id = t ? tabId(t) : null;
     var text = id != null && tabBadges[id] != null ? tabBadges[id] : globalBadge;
@@ -202,7 +217,18 @@
       query: function (q, cb) { q = q || {}; var a = nativeTabs().filter(function (t) {
         return !(q.active && t.browserWindow.activeTab !== t) && !(q.currentWindow && t.browserWindow !== app.activeBrowserWindow) &&
           !(q.windowId > 0 && winId(t.browserWindow) !== q.windowId) && !(q.url && !urlMatches(t.url || "", q.url));
-      }).map(tab); return done(cb, a); },
+      }).map(tab);
+      // Only when a url filter is given (the popout-finding queries always pass one):
+      // surface popover-hosted popouts as synthetic tabs so the app can locate and
+      // close them (closeSingleActionPopout, isSingleActionPopoutOpen). windowId maps
+      // to the popout id so removeWindow(windowId) routes to windows.remove.
+      if (q.url) { Object.keys(popoverPopouts).forEach(function (pid) {
+        var pu = popoverPopouts[pid].url;
+        if (!urlMatches(pu, q.url) || (q.windowId > 0 && q.windowId !== Number(pid))) return;
+        a.push({ id: 900000 + Number(pid), index: 0, windowId: Number(pid), active: true, selected: true, highlighted: true,
+          pinned: false, incognito: false, title: "Bitwarden", url: pu, status: "complete" });
+      }); }
+      return done(cb, a); },
       get: function (id, cb) { return done(cb, tab(findTab(id))); },
       create: function (p, cb) {
         var u = resolveUrl(p && p.url) || "about:blank";
@@ -239,16 +265,17 @@
         // windows (unlock prompts, SSO results, passkey confirmations) in the
         // toolbar popover instead — the one context where the full app runs.
         if (u && u.indexOf(origin) === 0) {
-          var po = (ext.popovers || [])[0], item = (ext.toolbarItems || [])[0];
+          var po = popoverEl(), item = (ext.toolbarItems || [])[0];
           if (po) {
+            var id = popoutSequence++;
+            // Register BEFORE showing so the 'popover' event handler recognizes this
+            // as a live popout and does not reset it back to the normal popup. Only
+            // uilocation=popout URLs are single-action sessions windows.remove closes.
+            if (u.indexOf("uilocation=popout") >= 0) popoverPopouts[id] = { url: u };
             if (d.width) { try { po.width = d.width; } catch (_) {} }
             if (d.height) { try { po.height = d.height; } catch (_) {} }
-            po.contentURL = u;
+            popoverGo(u);
             if (item && item.showPopover) item.showPopover();
-            var id = popoutSequence++;
-            // Track only single-action popouts (the ones windows.remove will close);
-            // fire-and-forget pages routed here by tabs.create are not sessions.
-            if (u.indexOf("uilocation=popout") >= 0) popoverPopouts[id] = true;
             return done(cb, { id: id, focused: true, type: "popup", state: "normal", alwaysOnTop: false, incognito: false });
           }
         }
@@ -258,8 +285,9 @@
       remove: function (id, cb) {
         if (popoverPopouts[id]) {
           delete popoverPopouts[id];
-          var po = (ext.popovers || [])[0];
-          if (po) { try { po.hide(); } catch (_) {} po.contentURL = base + "popup/index.html"; }
+          var po = popoverEl();
+          if (po) { try { po.hide(); } catch (_) {} }
+          restorePopover();
           chrome.windows.onRemoved.emit(id);
           return done(cb);
         }
@@ -417,13 +445,13 @@
   // for the same reason; the boot key lets same-tab reopens stay instant). The
   // extension-page bridge records __bwBootTabKey when the popup boots.
   onAppEvent("popover", function (e) {
-    var po = (e.target && e.target.contentWindow ? e.target : null) || (ext.popovers || [])[0];
+    var po = (e.target && e.target.contentWindow ? e.target : null) || popoverEl();
     if (!po || !po.contentWindow) return;
     if (String(po.contentURL || "").indexOf("uilocation=popout") >= 0) {
       // A live single-action popout owns the popover; a stale one (its session was
       // never closed via windows.remove) is swapped back for the normal popup.
       if (Object.keys(popoverPopouts).length) return;
-      po.contentURL = base + "popup/index.html";
+      restorePopover();
       return;
     }
     var t = active(), key = t ? tabId(t) + "|" + (t.url || "") : null;
