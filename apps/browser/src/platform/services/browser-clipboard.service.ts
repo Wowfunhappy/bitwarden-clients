@@ -8,9 +8,17 @@ class BrowserClipboardService {
    *
    * @param globalContext - The global window context.
    * @param text - The text to copy.
+   * @param options - Copy options. `preferLegacy` skips the asynchronous
+   *   Clipboard API and copies synchronously via `execCommand`. This is required
+   *   on hosts where the Clipboard API is present but unusable from the calling
+   *   context (e.g. the legacy Safari extension popover): the async API loses the
+   *   user gesture on failure, whereas the synchronous path keeps it.
    */
-  static async copy(globalContext: Window, text: string) {
-    if (!BrowserClipboardService.isClipboardApiSupported(globalContext, "writeText")) {
+  static async copy(globalContext: Window, text: string, options?: { preferLegacy?: boolean }) {
+    if (
+      options?.preferLegacy ||
+      !BrowserClipboardService.isClipboardApiSupported(globalContext, "writeText")
+    ) {
       this.useLegacyCopyMethod(globalContext, text);
       return;
     }
@@ -61,13 +69,30 @@ class BrowserClipboardService {
     }
 
     const textareaElement = globalContext.document.createElement("textarea");
-    textareaElement.textContent = !text ? " " : text;
+    textareaElement.value = !text ? " " : text;
+    // Keep the element in the layout (Safari will not copy from a detached or
+    // display:none node) but out of sight.
     textareaElement.style.position = "fixed";
+    textareaElement.style.top = "0";
+    textareaElement.style.left = "0";
+    textareaElement.style.width = "1px";
+    textareaElement.style.height = "1px";
+    textareaElement.style.opacity = "0";
     globalContext.document.body.appendChild(textareaElement);
-    textareaElement.select();
 
     try {
-      globalContext.document.execCommand("copy");
+      // Safari's `<textarea>.select()` alone does not reliably produce the
+      // selection that `execCommand("copy")` reads from, so also focus the field
+      // and set an explicit selection range.
+      textareaElement.focus();
+      textareaElement.select();
+      textareaElement.setSelectionRange(0, textareaElement.value.length);
+
+      if (!globalContext.document.execCommand("copy")) {
+        BrowserClipboardService.consoleLogService.warning(
+          "Legacy copy command returned false; the clipboard was not updated",
+        );
+      }
     } catch (error) {
       BrowserClipboardService.consoleLogService.warning(`Error writing to clipboard: ${error}`);
     } finally {

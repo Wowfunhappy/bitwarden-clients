@@ -149,6 +149,21 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
     return this.getDevice() === DeviceType.SafariExtension;
   }
 
+  /**
+   * Detects the legacy Safari (pre-WebExtension) port. Its compatibility
+   * polyfill marks the reconstructed `chrome` object. Unlike a modern Safari
+   * App Extension, this target has no native companion app, so the Safari
+   * native-messaging clipboard path is a no-op and the DOM clipboard must be
+   * used instead.
+   */
+  static isSafariLegacy(globalContext: Window | ServiceWorkerGlobalScope): boolean {
+    return Boolean((globalContext as any)?.chrome?.__bitwardenSafariLegacy);
+  }
+
+  isSafariLegacy(): boolean {
+    return BrowserPlatformUtilsService.isSafariLegacy(this.globalContext);
+  }
+
   isIE(): boolean {
     return false;
   }
@@ -233,6 +248,20 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
       }
     };
 
+    // The legacy Safari port has no native companion app to service the
+    // native-messaging clipboard command, so copy synchronously via the DOM
+    // (execCommand) in the popup, where the user gesture that triggered the copy
+    // is still active. `preferLegacy` skips the async Clipboard API, which this
+    // host exposes but cannot use from the popover (it loses the gesture on
+    // failure, and its errors are only logged at the suppressed debug level).
+    if (this.isSafariLegacy()) {
+      void BrowserClipboardService.copy(windowContext, text, { preferLegacy: true }).then(
+        handleClipboardWriteCallback,
+      );
+
+      return;
+    }
+
     if (this.isSafari()) {
       void SafariApp.sendMessageToApp("copyToClipboard", text).then(handleClipboardWriteCallback);
 
@@ -264,7 +293,9 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
   async readFromClipboard(options?: ClipboardOptions): Promise<string> {
     const windowContext = options?.window || (this.globalContext as Window);
 
-    if (this.isSafari()) {
+    // See copyToClipboard: the legacy Safari port has no native companion app,
+    // so use the DOM clipboard instead of the native-messaging path.
+    if (this.isSafari() && !this.isSafariLegacy()) {
       return await SafariApp.sendMessageToApp("readFromClipboard");
     }
 

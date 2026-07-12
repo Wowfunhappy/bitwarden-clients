@@ -202,6 +202,25 @@ describe("Browser Utils Service", () => {
       expect(triggerOffscreenCopyToClipboardSpy).not.toHaveBeenCalled();
     });
 
+    it("copies using the BrowserClipboardService on the legacy Safari port, which has no native app", async () => {
+      const text = "test";
+      jest
+        .spyOn(browserPlatformUtilsService, "getDevice")
+        .mockReturnValue(DeviceType.SafariExtension);
+      const chromeMock = ((window as any).chrome ??= {});
+      chromeMock.__bitwardenSafariLegacy = true;
+
+      try {
+        browserPlatformUtilsService.copyToClipboard(text, { window: self });
+        await flushPromises();
+
+        expect(clipboardServiceCopySpy).toHaveBeenCalledWith(self, text, { preferLegacy: true });
+        expect(sendMessageToAppSpy).not.toHaveBeenCalled();
+      } finally {
+        delete chromeMock.__bitwardenSafariLegacy;
+      }
+    });
+
     it("sets the copied text to a unicode placeholder when the user is using Chrome if the passed text is an empty string", async () => {
       const text = "";
       jest
@@ -286,6 +305,25 @@ describe("Browser Utils Service", () => {
       expect(sendMessageToAppSpy).toHaveBeenCalledWith("readFromClipboard");
       expect(clipboardServiceReadSpy).not.toHaveBeenCalled();
       expect(result).toBe("test");
+    });
+
+    it("reads using the BrowserClipboardService on the legacy Safari port, which has no native app", async () => {
+      jest
+        .spyOn(browserPlatformUtilsService, "getDevice")
+        .mockReturnValue(DeviceType.SafariExtension);
+      clipboardServiceReadSpy.mockResolvedValueOnce("test");
+      const chromeMock = ((window as any).chrome ??= {});
+      chromeMock.__bitwardenSafariLegacy = true;
+
+      try {
+        const result = await browserPlatformUtilsService.readFromClipboard({ window: self });
+
+        expect(clipboardServiceReadSpy).toHaveBeenCalledWith(self);
+        expect(sendMessageToAppSpy).not.toHaveBeenCalled();
+        expect(result).toBe("test");
+      } finally {
+        delete chromeMock.__bitwardenSafariLegacy;
+      }
     });
 
     it("reads text from the clipboard using the ClipboardService", async () => {
