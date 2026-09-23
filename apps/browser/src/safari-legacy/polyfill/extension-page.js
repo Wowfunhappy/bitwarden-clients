@@ -1,9 +1,25 @@
 (function (g) {
   if (g.chrome && g.chrome.__bitwardenSafariLegacy) return;
-  var b = safari.extension.globalPage && safari.extension.globalPage.contentWindow;
-  if (!b || !b.__bwLegacyChrome)
-    throw new Error("Bitwarden Safari legacy background page is unavailable");
-  g.chrome = b.__bwLegacyChrome;
+  function backgroundChrome() {
+    var b = safari.extension.globalPage && safari.extension.globalPage.contentWindow;
+    return (b && b.__bwLegacyChrome) || null;
+  }
+  var bg = backgroundChrome();
+  if (!bg) {
+    // The popover document is loaded at extension launch, in parallel with the global
+    // page, so it can run before the background bridge has installed __bwLegacyChrome.
+    // The app bundle that follows this script needs `chrome` synchronously, and the
+    // popover keeps its document between opens, so a page that boots without it would
+    // stay broken (a spinner forever) until manually reloaded. Poll for the global
+    // page and reload once it is ready.
+    var wait = g.setInterval(function () {
+      if (!backgroundChrome()) return;
+      g.clearInterval(wait);
+      g.location.reload();
+    }, 100);
+    return;
+  }
+  g.chrome = bg;
   g.browser = g.chrome;
 
   // macOS Safari does not move keyboard focus to a <button> when it is clicked, so
@@ -71,10 +87,6 @@
     var cm = doc.getElementById("context-menu");
     hide(cm && cm.closest ? cm.closest(".box-content-row") : null);
     hide(doc.getElementById("context-menuHelp"));
-    // The inline autofill menu (overlay on page form fields) is not functional in
-    // this port and is unwanted; hide its settings block.
-    var ov = doc.getElementById("autofill-overlay-settings");
-    hide(ov && ov.closest ? ov.closest(".box") : null);
   }
   function watchUi() {
     applyUiFixes();

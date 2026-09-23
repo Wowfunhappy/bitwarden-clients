@@ -13,8 +13,10 @@
     menus = {},
     alarms = {};
   var session = {},
-    manifest = read("_locales/en/messages.json") && read("manifest.json");
-  manifest = manifest || { manifest_version: 2, name: "Bitwarden", version: "2024.11.2-a" };
+    // The legacy extension resource loader rejects manifest.json in some WebKit
+    // builds. The application only consumes these three fields, which are versioned
+    // alongside the equivalent content-script fallback and the packaged manifest.
+    manifest = { manifest_version: 2, name: "Bitwarden", version: "2024.11.2-a" };
 
   function read(path) {
     try {
@@ -1209,6 +1211,17 @@
   g.chrome = chrome;
   g.browser = chrome;
   g.__bwLegacyChrome = chrome;
+  // The popover document persists across a global-page reload (e.g. runtime.reload),
+  // leaving it bound to the previous page's chrome object, whose state is gone.
+  // Reload any popover holding a stale bridge. A popover that has not booted yet
+  // (no chrome at all) is left alone: its own bridge waits for this page and reloads.
+  (ext.popovers || []).forEach(function (po) {
+    try {
+      var w = po.contentWindow;
+      if (w && w.chrome && w.chrome.__bitwardenSafariLegacy && w.chrome !== chrome)
+        w.location.reload();
+    } catch (_) {}
+  });
   setTimeout(function () {
     var k = "__bw_legacy_installed_version",
       old = ext.settings.getItem(k),

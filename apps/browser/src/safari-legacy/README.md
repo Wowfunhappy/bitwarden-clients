@@ -60,11 +60,21 @@ top of Safari's legacy extension objects:
 - `content.js` — messaging + dynamic-injection bridge and `chrome.i18n` for
   injected content scripts.
 - `extension-page.js` — bridges extension pages (the popup) to the global
-  page's `chrome` object and applies a few legacy-host UI adjustments.
+  page's `chrome` object (waiting for the global page to boot first, since the
+  popover loads in parallel with it) and applies a few legacy-host UI adjustments.
+- `hosted-page.js` — the `chrome.*` surface for extension pages that the content
+  script loads into an iframe on the web page: the save/update-login bar. Those
+  documents run in the web process, which reaches neither `safari.extension.globalPage`
+  nor `safari.self`, so the bridge builds resource URLs from the document's own URL,
+  reads the message catalog with a same-origin request, and relays runtime messaging
+  through the hosting frame's content bridge. The relay is also what makes the global
+  page see those messages as coming from the tab, which the notification handlers
+  require — nearly all of them act on `sender.tab`.
 
 `package-safari-legacy.js` copies the webpack build, injects the bridge scripts
-into each HTML page, writes `Info.plist`, copies toolbar icons, and appends a
-small CSS fixup.
+into each HTML page (`hosted-page.js` for the pages it lists as web-page-hosted,
+`extension-page.js` for the rest), writes `Info.plist`, copies toolbar icons, and
+appends a small CSS fixup.
 
 ### What works
 
@@ -97,8 +107,8 @@ extension scheme as a secure context. Upstream Permissions-Policy and
 
 - **Context menu** — legacy Safari menus are flat and cannot express the nested
   menu tree, so the feature and its settings toggle are removed.
-- **Inline autofill menu** — hidden; the port relies on on-page-load / popup
-  autofill.
+- **Inline autofill menu** — available, including its Autofill settings controls;
+  rendering and positioning depend on the capabilities of the backported WebKit host.
 - **Popout windows** — hosted in the toolbar popover, not standalone windows.
 - Native messaging, request-body/HTTP-auth observation, and browser
   privacy-setting control degrade to safe no-ops (the host never exposed them).

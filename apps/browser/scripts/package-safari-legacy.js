@@ -18,6 +18,12 @@ fs.cpSync(build, extension, { recursive: true });
 
 // Safari legacy extension pages do not receive a WebExtension API object.
 // Insert the extension-page adapter before each generated bundle.
+
+// Pages the content script loads into an iframe on the web page run in the web
+// process, where the global page is out of reach, so they get the relay bridge
+// instead of the one that talks to the global page directly.
+const hostedPages = ["notification/bar.html"];
+
 function injectBridge(directory) {
   fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
     const file = path.join(directory, entry.name);
@@ -25,13 +31,21 @@ function injectBridge(directory) {
       injectBridge(file);
     } else if (entry.name.endsWith(".html")) {
       const isBackground = entry.name === "background.html";
-      const bridge = isBackground ? "background.js" : "extension-page.js";
+      const relative = path.relative(extension, file).split(path.sep).join("/");
+      const bridge = isBackground
+        ? "background.js"
+        : hostedPages.includes(relative)
+          ? "hosted-page.js"
+          : "extension-page.js";
       let html = fs.readFileSync(file, "utf8");
       if (html.includes("safari-legacy/" + bridge)) {
         return; // already injected
       }
       const rel = (name) =>
-        path.relative(path.dirname(file), path.join(extension, "safari-legacy", name)).split(path.sep).join("/");
+        path
+          .relative(path.dirname(file), path.join(extension, "safari-legacy", name))
+          .split(path.sep)
+          .join("/");
       // The global page also loads the phishing-detection service (after the bridge
       // installs `chrome`); other extension pages only need the API bridge.
       const scripts = [rel(bridge)]

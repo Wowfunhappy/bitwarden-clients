@@ -2,6 +2,18 @@
 (function (g) {
   "use strict";
   if (g.chrome && g.chrome.__bitwardenSafariLegacyContent) return;
+  // Safari only exposes the injected-script API on the top frame in some legacy
+  // WebKit builds. It may also remove the global before pagehide runs. Resolve and
+  // retain the host objects while this script is being installed instead of looking
+  // up the `safari` global later from message, port, and lifecycle callbacks.
+  var safariApi = null;
+  try {
+    safariApi = g.safari || (g.top && g.top.safari) || null;
+  } catch (_) {}
+  var safariSelf = safariApi && safariApi.self;
+  var safariTab = safariSelf && safariSelf.tab;
+  var extensionBase = (safariApi && safariApi.extension && safariApi.extension.baseURI) || "";
+
   var seq = 1,
     pending = {},
     ports = {};
@@ -24,6 +36,15 @@
       fn.apply(null, a);
     });
   };
+  function dispatchMessage(name, message) {
+    if (!safariTab || typeof safariTab.dispatchMessage !== "function") return false;
+    try {
+      safariTab.dispatchMessage(name, message);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
   function sendMessage(message, callback) {
     var id = "c" + Date.now() + "-" + seq++;
     return new Promise(function (resolve) {
@@ -32,13 +53,18 @@
         if (callback) callback(value);
         resolve(value);
       };
-      safari.self.tab.dispatchMessage("bw.legacy.runtime", {
-        kind: "message",
-        requestId: id,
-        message: message,
-        frameId: g === g.top ? 0 : -1,
-        url: location.href,
-      });
+      if (
+        !dispatchMessage("bw.legacy.runtime", {
+          kind: "message",
+          requestId: id,
+          message: message,
+          frameId: g === g.top ? 0 : -1,
+          url: location.href,
+        })
+      ) {
+        pending[id]();
+        return;
+      }
       setTimeout(function () {
         if (pending[id]) pending[id]();
       }, 10000);
@@ -51,22 +77,29 @@
       onMessage: new Event(),
       onDisconnect: new Event(),
       postMessage: function (m) {
-        safari.self.tab.dispatchMessage("bw.legacy.port", { portId: id, message: m });
+        dispatchMessage("bw.legacy.port", { portId: id, message: m });
       },
       disconnect: function () {
-        safari.self.tab.dispatchMessage("bw.legacy.port", { portId: id, disconnect: true });
+        dispatchMessage("bw.legacy.port", { portId: id, disconnect: true });
         p.onDisconnect.emit(p);
         delete ports[id];
       },
     };
     ports[id] = p;
-    safari.self.tab.dispatchMessage("bw.legacy.runtime", {
-      kind: "connect",
-      portId: id,
-      name: p.name,
-      frameId: g === g.top ? 0 : -1,
-      url: location.href,
-    });
+    if (
+      !dispatchMessage("bw.legacy.runtime", {
+        kind: "connect",
+        portId: id,
+        name: p.name,
+        frameId: g === g.top ? 0 : -1,
+        url: location.href,
+      })
+    ) {
+      delete ports[id];
+      setTimeout(function () {
+        p.onDisconnect.emit(p);
+      }, 0);
+    }
     return p;
   }
   function load(url) {
@@ -102,7 +135,8 @@
   // token; root-relative paths that already include it resolve against the origin,
   // hardcoded root-relative asset paths resolve against baseURI.
   function getURL(p) {
-    var base = safari.extension.baseURI;
+    var base = extensionBase;
+    if (!base) return String(p == null ? "" : p);
     var origin = base.replace(/^([a-z][a-z0-9+.\-]*:\/\/[^\/]*)\/.*$/i, "$1");
     var basePath = base.slice(origin.length);
     p = String(p == null ? "" : p);
@@ -131,6 +165,11 @@
   }
   function ensureLocale() {
     if (localeData) return;
+    if (!extensionBase) {
+      localeData = {};
+      localeLower = {};
+      return;
+    }
     // Only these regional variants ship in _locales; requesting a missing directory
     // logs a console error on the host page, so fall back deliberately.
     var regionals = ["en_GB", "en_IN", "pt_BR", "pt_PT", "zh_CN", "zh_TW"];
@@ -192,15 +231,62 @@
   g.chrome = chrome;
   g.browser = chrome;
 
+  // Relay for extension pages this page hosts in an iframe — the notification bar.
+  // Those documents load in the web process, which reaches neither the global page nor
+  // safari.self, so their bridge (hosted-page.js) forwards runtime messaging here and
+  // this bridge's channel carries it. Routing it this way also gives the global page
+  // the sender it expects: the notification handlers act on sender.tab, so a save or a
+  // height adjustment has to arrive as a message from this tab.
+  var hostedOrigin = extensionBase
+    ? extensionBase.replace(/^([a-z][a-z0-9+.\-]*:\/\/[^\/]*)\/.*$/i, "$1").toLowerCase()
+    : "";
+  var hostedPorts = {};
+  if (hostedOrigin) {
+    g.addEventListener(
+      "message",
+      function (e) {
+        var p = e.data && e.data.bwLegacyHostedBridge;
+        // Only this extension's own documents may drive the relay; page script shares
+        // this window but cannot post from the extension's origin.
+        if (!p || String(e.origin).toLowerCase() !== hostedOrigin || !e.source) return;
+        var source = e.source;
+        function reply(payload) {
+          try {
+            source.postMessage({ bwLegacyHostedBridge: payload }, e.origin);
+          } catch (_) {}
+        }
+        if (p.kind === "message") {
+          sendMessage(p.message, function (response) {
+            reply({ kind: "response", requestId: p.requestId, response: response });
+          });
+        } else if (p.kind === "connect") {
+          var port = connect({ name: p.name });
+          hostedPorts[p.portId] = port;
+          port.onMessage.addListener(function (m) {
+            reply({ kind: "port", portId: p.portId, message: m });
+          });
+          port.onDisconnect.addListener(function () {
+            delete hostedPorts[p.portId];
+            reply({ kind: "port", portId: p.portId, disconnect: true });
+          });
+        } else if (p.kind === "port" && hostedPorts[p.portId]) {
+          if (p.disconnect) {
+            hostedPorts[p.portId].disconnect();
+            delete hostedPorts[p.portId];
+          } else hostedPorts[p.portId].postMessage(p.message);
+        }
+      },
+      false,
+    );
+  }
+
   // Tab-state reporter. The hosting browser does not reliably surface tab switches
   // or navigations to the global page (application events and hidden-page timers
   // both proved unreliable), but content-script messages are delivered immediately —
   // uBlock's legacy port tracks tabs the same way. Only the top frame reports.
   if (g === g.top) {
     var reportTab = function (kind) {
-      try {
-        safari.self.tab.dispatchMessage("bw.legacy.tab", { kind: kind, url: g.location.href });
-      } catch (_) {}
+      dispatchMessage("bw.legacy.tab", { kind: kind, url: g.location.href });
     };
     reportTab("load");
     g.addEventListener("focus", function () {
@@ -219,59 +305,87 @@
       if (!g.document.hidden) reportTab("focus");
     });
   }
-  safari.self.addEventListener(
-    "message",
-    function (e) {
-      var p = e.message || {};
-      if (e.name === "bw.legacy.response" && pending[p.requestId]) pending[p.requestId](p.response);
-      else if (e.name === "bw.legacy.runtime" && p.kind === "message") {
-        var answered = false,
-          waiting = false;
-        function reply(value) {
-          if (answered) return;
-          answered = true;
-          safari.self.tab.dispatchMessage("bw.legacy.runtime", {
-            kind: "response",
-            requestId: p.requestId,
-            response: value,
+  function onGlobalPageMessage(e) {
+    var p = e.message || {};
+    if (e.name === "bw.legacy.response" && pending[p.requestId]) pending[p.requestId](p.response);
+    else if (e.name === "bw.legacy.runtime" && p.kind === "message") {
+      var answered = false,
+        waiting = false;
+      function reply(value) {
+        if (answered) return;
+        answered = true;
+        dispatchMessage("bw.legacy.runtime", {
+          kind: "response",
+          requestId: p.requestId,
+          response: value,
+        });
+      }
+      // Chrome semantics: only sendResponse delivers a response; `true` keeps the
+      // channel open for it and a returned Promise resolves as it. A plain return
+      // value (e.g. `false`/`null` for "not handling this") is ignored so it cannot
+      // clobber another listener's real sendResponse.
+      onMessage.listeners.slice().forEach(function (fn) {
+        var v = fn(p.message, {}, reply);
+        if (v === true) waiting = true;
+        else if (v && typeof v.then === "function") {
+          waiting = true;
+          v.then(reply, function () {
+            reply();
           });
         }
-        // Chrome semantics: only sendResponse delivers a response; `true` keeps the
-        // channel open for it and a returned Promise resolves as it. A plain return
-        // value (e.g. `false`/`null` for "not handling this") is ignored so it cannot
-        // clobber another listener's real sendResponse.
-        onMessage.listeners.slice().forEach(function (fn) {
-          var v = fn(p.message, {}, reply);
-          if (v === true) waiting = true;
-          else if (v && typeof v.then === "function") {
-            waiting = true;
-            v.then(reply, function () {
-              reply();
-            });
-          }
-        });
-        if (!answered && !waiting) reply();
-      } else if (e.name === "bw.legacy.port" && ports[p.portId]) {
-        if (p.disconnect) {
-          ports[p.portId].onDisconnect.emit(ports[p.portId]);
-          delete ports[p.portId];
-        } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]);
-      } else if (e.name === "bw.legacy.execute") {
-        if (p.frameId != null && p.frameId >= 0 && p.frameId !== (g === g.top ? 0 : -1)) return;
-        if (p.file) load(p.baseURI + p.file);
-        else if (p.code) (0, eval)(p.code);
-        else if (p.cssFile) {
-          var link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.href = p.baseURI + p.cssFile;
-          (document.head || document.documentElement).appendChild(link);
-        } else if (p.cssCode) {
-          var style = document.createElement("style");
-          style.textContent = p.cssCode;
-          (document.head || document.documentElement).appendChild(style);
-        }
+      });
+      if (!answered && !waiting) reply();
+    } else if (e.name === "bw.legacy.port" && ports[p.portId]) {
+      if (p.disconnect) {
+        ports[p.portId].onDisconnect.emit(ports[p.portId]);
+        delete ports[p.portId];
+      } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]);
+    } else if (e.name === "bw.legacy.execute") {
+      if (p.frameId != null && p.frameId >= 0 && p.frameId !== (g === g.top ? 0 : -1)) return;
+      if (p.file) load(p.baseURI + p.file);
+      else if (p.code) (0, eval)(p.code);
+      else if (p.cssFile) {
+        var link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = p.baseURI + p.cssFile;
+        (document.head || document.documentElement).appendChild(link);
+      } else if (p.cssCode) {
+        var style = document.createElement("style");
+        style.textContent = p.cssCode;
+        (document.head || document.documentElement).appendChild(style);
       }
-    },
-    false,
-  );
+    }
+  }
+
+  // Safari retains the calling frame's JavaScript context for as long as a
+  // listener is registered on safari.self, and safari.self belongs to the tab
+  // rather than to this document. A listener that is never removed therefore
+  // pins this document, its window and its DOM until the tab's top-level page
+  // is replaced, so a page that renavigates a subframe accumulates one pinned
+  // document per navigation. The handler is named and its registration tracked
+  // so the context can be handed back.
+  var listening = false;
+  function startListening() {
+    if (listening || !safariSelf || typeof safariSelf.addEventListener !== "function") return;
+    try {
+      safariSelf.addEventListener("message", onGlobalPageMessage, false);
+      listening = true;
+    } catch (_) {}
+  }
+  function stopListening() {
+    if (!listening) return;
+    listening = false;
+    try {
+      safariSelf.removeEventListener("message", onGlobalPageMessage, false);
+    } catch (_) {}
+  }
+  startListening();
+  // Hand the context back when this document goes away.
+  g.addEventListener("pagehide", stopListening);
+  // A back/forward restore reuses this document without injecting the content
+  // script again, so the listener has to re-register itself from here. The
+  // persisted guard keeps a normal load from double-registering.
+  g.addEventListener("pageshow", function (e) {
+    if (e.persisted) startListening();
+  });
 })(this);

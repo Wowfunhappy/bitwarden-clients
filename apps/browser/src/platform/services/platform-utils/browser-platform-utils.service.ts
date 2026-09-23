@@ -9,6 +9,7 @@ import { SafariApp } from "../../../browser/safariApp";
 import { BrowserApi } from "../../browser/browser-api";
 import { OffscreenDocumentService } from "../../offscreen-document/abstractions/offscreen-document";
 import BrowserClipboardService from "../browser-clipboard.service";
+import { safariLegacyClipboardService } from "../safari-legacy-clipboard.service";
 
 export abstract class BrowserPlatformUtilsService implements PlatformUtilsService {
   private static deviceCache: DeviceType = null;
@@ -248,16 +249,12 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
       }
     };
 
-    // The legacy Safari port has no native companion app to service the
-    // native-messaging clipboard command, so copy synchronously via the DOM
-    // (execCommand) in the popup, where the user gesture that triggered the copy
-    // is still active. `preferLegacy` skips the async Clipboard API, which this
-    // host exposes but cannot use from the popover (it loses the gesture on
-    // failure, and its errors are only logged at the suppressed debug level).
+    // The legacy Safari port has no native companion app to service the native-messaging
+    // clipboard command, and its host permits a DOM write only while a user gesture is being
+    // processed. SafariLegacyClipboardService holds the write until a gesture-rooted timer can
+    // carry it out, which covers values that arrive after the click that asked for them.
     if (this.isSafariLegacy()) {
-      void BrowserClipboardService.copy(windowContext, text, { preferLegacy: true }).then(
-        handleClipboardWriteCallback,
-      );
+      safariLegacyClipboardService.write(windowContext, text, handleClipboardWriteCallback);
 
       return;
     }
