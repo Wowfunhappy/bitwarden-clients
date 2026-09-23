@@ -36,6 +36,7 @@ describe("Fido2 Content Script", () => {
 
   afterEach(() => {
     jest.resetModules();
+    delete (globalThis as any).bitwardenFido2ContentScriptInitialized;
   });
 
   afterAll(() => {
@@ -65,6 +66,27 @@ describe("Fido2 Content Script", () => {
     triggerPortOnDisconnectEvent(portSpy);
 
     expect(messenger.destroy).toHaveBeenCalled();
+  });
+
+  it("does not initialize a second instance when injected into the same document again", () => {
+    require("./fido2-content-script");
+    (chrome.runtime.connect as jest.Mock).mockClear();
+
+    jest.resetModules();
+    require("./fido2-content-script");
+
+    expect(chrome.runtime.connect).not.toHaveBeenCalled();
+  });
+
+  it("initializes a new instance when injected again after the port disconnects", () => {
+    require("./fido2-content-script");
+    triggerPortOnDisconnectEvent(portSpy);
+    (chrome.runtime.connect as jest.Mock).mockClear();
+
+    jest.resetModules();
+    require("./fido2-content-script");
+
+    expect(chrome.runtime.connect).toHaveBeenCalledTimes(1);
   });
 
   it("handles a FIDO2 credential creation request message from the window message listener, formats the message and sends the formatted message to the extension background", async () => {

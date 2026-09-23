@@ -102,6 +102,22 @@ describe("Fido2 page script without native WebAuthn support", () => {
     });
   });
 
+  describe("repeated injection", () => {
+    it("keeps the first instance when injected into the same document again", () => {
+      const firstMessenger = messenger;
+      const firstCreate = navigator.credentials.create;
+      const firstGet = navigator.credentials.get;
+
+      jest.isolateModules(() => {
+        require("./fido2-page-script");
+      });
+
+      expect(messenger).toBe(firstMessenger);
+      expect(navigator.credentials.create).toBe(firstCreate);
+      expect(navigator.credentials.get).toBe(firstGet);
+    });
+  });
+
   describe("destroy", () => {
     it("should destroy the message listener when receiving a disconnect request", async () => {
       jest.spyOn(globalThis.top, "removeEventListener");
@@ -110,6 +126,16 @@ describe("Fido2 page script without native WebAuthn support", () => {
 
       expect(globalThis.top.removeEventListener).toHaveBeenCalledWith("focus", undefined);
       expect(messenger.destroy).toHaveBeenCalled();
+    });
+
+    it("initializes a new instance when injected again after being destroyed", () => {
+      const destroyedMessenger = messenger;
+
+      jest.isolateModules(() => {
+        require("./fido2-page-script");
+      });
+
+      expect(messenger).not.toBe(destroyedMessenger);
     });
   });
 });

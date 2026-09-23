@@ -4,6 +4,8 @@ import { WebauthnUtils } from "../utils/webauthn-utils";
 import { MessageType } from "./messaging/message";
 import { Messenger } from "./messaging/messenger";
 
+const PAGE_SCRIPT_INITIALIZED_MARKER = "__bitwardenFido2PageScriptInitialized";
+
 (function (globalContext) {
   if (globalContext.document.currentScript) {
     globalContext.document.currentScript.parentNode.removeChild(
@@ -28,6 +30,22 @@ import { Messenger } from "./messaging/messenger";
   if (currentlyInSandboxedIframe()) {
     return;
   }
+
+  // The MV2 content-script registration polyfill injects on every webNavigation.onCommitted,
+  // and hosts that synthesize that event (the legacy Safari port reports SPA URL changes,
+  // back/forward restores and late navigation signals through it) can inject this script
+  // into a document that already runs it. A second instance would wrap the first one's
+  // navigator.credentials override, and the first instance's messenger would then answer
+  // the second's requests before the content script does, failing every ceremony. Only
+  // the first instance in a document runs; destroy() releases the marker so a fresh
+  // injection after a disconnect can take over.
+  if (Object.prototype.hasOwnProperty.call(globalContext, PAGE_SCRIPT_INITIALIZED_MARKER)) {
+    return;
+  }
+  Object.defineProperty(globalContext, PAGE_SCRIPT_INITIALIZED_MARKER, {
+    value: true,
+    configurable: true,
+  });
 
   const BrowserPublicKeyCredential = globalContext.PublicKeyCredential;
   const BrowserNavigatorCredentials = navigator.credentials;
@@ -299,6 +317,8 @@ import { Messenger } from "./messaging/messenger";
       void messenger.destroy();
     } catch (e) {
       /** empty */
+    } finally {
+      delete (globalContext as any)[PAGE_SCRIPT_INITIALIZED_MARKER];
     }
   }
 

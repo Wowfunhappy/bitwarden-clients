@@ -25,6 +25,18 @@ import { MessageWithMetadata, Messenger } from "./messaging/messenger";
     return;
   }
 
+  // The MV2 content-script registration polyfill can inject this script into a document
+  // that already runs it (see the matching guard in the page script). Only the first
+  // instance connects a port and answers page requests; a port disconnect releases the
+  // marker so a fresh injection can take over.
+  const contentScriptContext = globalContext as typeof globalContext & {
+    bitwardenFido2ContentScriptInitialized?: boolean;
+  };
+  if (contentScriptContext.bitwardenFido2ContentScriptInitialized) {
+    return;
+  }
+  contentScriptContext.bitwardenFido2ContentScriptInitialized = true;
+
   // Initialization logic, set up the messenger and connect a port to the background script.
   const messenger = Messenger.forDOMCommunication(globalContext.window);
   messenger.handler = handleFido2Message;
@@ -202,6 +214,7 @@ import { MessageWithMetadata, Messenger } from "./messaging/messenger";
    * implemented page-script.js logic.
    */
   function handlePortOnDisconnect() {
+    delete contentScriptContext.bitwardenFido2ContentScriptInitialized;
     void messenger.destroy();
   }
 })(globalThis);
