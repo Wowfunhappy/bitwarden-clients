@@ -203,6 +203,12 @@
     }
     return false;
   }
+  // Safari delivers a message sent to a tab to every frame in it. A message meant for
+  // one frame carries that frame's ID in its name, which the content bridge checks
+  // before reading the payload; a name without an ID reaches every frame.
+  function frameName(name, frameId) {
+    return typeof frameId === "number" ? name + ":" + frameId : name;
+  }
   function dispatch(message, sender, reply) {
     var answered = false,
       waiting = false;
@@ -623,11 +629,10 @@
             resolve(r);
           };
           if (
-            !send(findTab(id), "bw.legacy.runtime", {
+            !send(findTab(id), frameName("bw.legacy.runtime", opts && opts.frameId), {
               kind: "message",
               requestId: rid,
               message: m,
-              frameId: opts && opts.frameId,
             })
           )
             responses[rid]();
@@ -637,19 +642,17 @@
         });
       },
       executeScript: function (id, d, cb) {
-        send(findTab(id), "bw.legacy.execute", {
+        send(findTab(id), frameName("bw.legacy.execute", d.frameId), {
           file: d.file,
           code: d.code,
-          frameId: d.frameId,
           baseURI: base,
         });
         return done(cb, []);
       },
       insertCSS: function (id, d, cb) {
-        send(findTab(id), "bw.legacy.execute", {
+        send(findTab(id), frameName("bw.legacy.execute", d.frameId), {
           cssFile: d.file,
           cssCode: d.code,
-          frameId: d.frameId,
           baseURI: base,
         });
         return done(cb);
@@ -1034,7 +1037,10 @@
             p.message,
             { tab: tab(e.target), frameId: p.frameId || 0, url: p.url },
             function (r) {
-              send(e.target, "bw.legacy.response", { requestId: p.requestId, response: r });
+              send(e.target, frameName("bw.legacy.response", p.frameId || 0), {
+                requestId: p.requestId,
+                response: r,
+              });
             },
           );
         else if (p.kind === "response" && responses[p.requestId])
@@ -1044,10 +1050,16 @@
             p.name,
             { tab: tab(e.target), frameId: p.frameId || 0, url: p.url },
             function (m) {
-              send(e.target, "bw.legacy.port", { portId: p.portId, message: m });
+              send(e.target, frameName("bw.legacy.port", p.frameId || 0), {
+                portId: p.portId,
+                message: m,
+              });
             },
             function () {
-              send(e.target, "bw.legacy.port", { portId: p.portId, disconnect: true });
+              send(e.target, frameName("bw.legacy.port", p.frameId || 0), {
+                portId: p.portId,
+                disconnect: true,
+              });
               delete ports[p.portId];
             },
           );

@@ -92,7 +92,7 @@ const info = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Author</key><string>Bitwarden Inc.</string>
+  <key>Author</key><string>Bitwarden Inc. &amp; Wowfunhappy</string>
   <key>Builder Version</key><string>13604.4.7.1.3</string>
   <key>CFBundleDisplayName</key><string>Bitwarden</string>
   <key>CFBundleIdentifier</key><string>com.bitwarden.safari</string>

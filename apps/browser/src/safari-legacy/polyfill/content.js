@@ -2,6 +2,9 @@
 (function (g) {
   "use strict";
   if (g.chrome && g.chrome.__bitwardenSafariLegacyContent) return;
+  // Keep WebKit's native content-script API before replacing `browser` with the
+  // compatibility bridge. Autofill already uses chrome.dom when it is available.
+  var nativeDom = g.browser && g.browser.dom;
   // Safari only exposes the injected-script API on the top frame in some legacy
   // WebKit builds. It may also remove the global before pagehide runs. Resolve and
   // retain the host objects while this script is being installed instead of looking
@@ -17,6 +20,12 @@
   var seq = 1,
     pending = {},
     ports = {};
+  // Chrome numbering: the top frame is 0 and every subframe has its own positive ID.
+  // Safari delivers everything the global page sends to a tab to every frame in it,
+  // so the global page appends the target frame's ID to the message name, and frames
+  // drop messages addressed to another frame before reading the payload.
+  var frameId = g === g.top ? 0 : 1 + Math.floor(Math.random() * 0x7ffffffe);
+  var frameSuffix = ":" + frameId;
   function Event() {
     this.listeners = [];
   }
@@ -58,7 +67,7 @@
           kind: "message",
           requestId: id,
           message: message,
-          frameId: g === g.top ? 0 : -1,
+          frameId: frameId,
           url: location.href,
         })
       ) {
@@ -91,7 +100,7 @@
         kind: "connect",
         portId: id,
         name: p.name,
-        frameId: g === g.top ? 0 : -1,
+        frameId: frameId,
         url: location.href,
       })
     ) {
@@ -131,6 +140,13 @@
     },
     extension: { getURL: getURL },
   };
+  if (nativeDom && typeof nativeDom.openOrClosedShadowRoot === "function") {
+    chrome.dom = {
+      openOrClosedShadowRoot: function (node) {
+        return nativeDom.openOrClosedShadowRoot(node);
+      },
+    };
+  }
   // Mirrors the background bridge: legacy Safari baseURIs carry a per-session path
   // token; root-relative paths that already include it resolve against the origin,
   // hardcoded root-relative asset paths resolve against baseURI.
@@ -306,9 +322,29 @@
     });
   }
   function onGlobalPageMessage(e) {
+    // WebKit fires neither pagehide nor unload for a frame removed before its load
+    // event finishes, so a removed frame releases its listener here instead.
+    if (g.closed) {
+      stopListening();
+      return;
+    }
+    // Reading e.message deserializes the payload, so the name is checked first.
+    var name = String(e.name),
+      sep = name.indexOf(":");
+    if (sep >= 0) {
+      if (name.slice(sep) !== frameSuffix) return;
+      name = name.slice(0, sep);
+    }
+    if (
+      name !== "bw.legacy.response" &&
+      name !== "bw.legacy.runtime" &&
+      name !== "bw.legacy.port" &&
+      name !== "bw.legacy.execute"
+    )
+      return;
     var p = e.message || {};
-    if (e.name === "bw.legacy.response" && pending[p.requestId]) pending[p.requestId](p.response);
-    else if (e.name === "bw.legacy.runtime" && p.kind === "message") {
+    if (name === "bw.legacy.response" && pending[p.requestId]) pending[p.requestId](p.response);
+    else if (name === "bw.legacy.runtime" && p.kind === "message") {
       var answered = false,
         waiting = false;
       function reply(value) {
@@ -335,13 +371,12 @@
         }
       });
       if (!answered && !waiting) reply();
-    } else if (e.name === "bw.legacy.port" && ports[p.portId]) {
+    } else if (name === "bw.legacy.port" && ports[p.portId]) {
       if (p.disconnect) {
         ports[p.portId].onDisconnect.emit(ports[p.portId]);
         delete ports[p.portId];
       } else ports[p.portId].onMessage.emit(p.message, ports[p.portId]);
-    } else if (e.name === "bw.legacy.execute") {
-      if (p.frameId != null && p.frameId >= 0 && p.frameId !== (g === g.top ? 0 : -1)) return;
+    } else if (name === "bw.legacy.execute") {
       if (p.file) load(p.baseURI + p.file);
       else if (p.code) (0, eval)(p.code);
       else if (p.cssFile) {

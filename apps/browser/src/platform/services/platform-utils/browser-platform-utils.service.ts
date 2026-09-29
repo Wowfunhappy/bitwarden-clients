@@ -230,11 +230,9 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
   }
 
   /**
-   * Copies the passed text to the clipboard. For Safari, this will use
-   * the native messaging API to send the text to the Bitwarden app. If
-   * the extension is using manifest v3, the offscreen document API will
-   * be used to copy the text to the clipboard. Otherwise, the browser's
-   * clipboard API will be used.
+   * Copies the passed text to the clipboard. Modern Safari uses its companion app;
+   * the legacy Safari port uses the host's clipboard API. Manifest v3 uses an
+   * offscreen document where supported, and other browsers use their clipboard API.
    *
    * @param text - The text to copy to the clipboard.
    * @param options - Options for the clipboard operation.
@@ -249,12 +247,10 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
       }
     };
 
-    // The legacy Safari port has no native companion app to service the native-messaging
-    // clipboard command, and its host permits a DOM write only while a user gesture is being
-    // processed. SafariLegacyClipboardService holds the write until a gesture-rooted timer can
-    // carry it out, which covers values that arrive after the click that asked for them.
+    // The custom WebKit host permits clipboard access from extension pages, including the
+    // background page, without a user gesture. Its promise resolves only after a successful write.
     if (this.isSafariLegacy()) {
-      safariLegacyClipboardService.write(windowContext, text, handleClipboardWriteCallback);
+      void safariLegacyClipboardService.write(windowContext, text, handleClipboardWriteCallback);
 
       return;
     }
@@ -279,20 +275,22 @@ export abstract class BrowserPlatformUtilsService implements PlatformUtilsServic
   }
 
   /**
-   * Reads the text from the clipboard. For Safari, this will use the
-   * native messaging API to request the text from the Bitwarden app. If
-   * the extension is using manifest v3, the offscreen document API will
-   * be used to read the text from the clipboard. Otherwise, the browser's
-   * clipboard API will be used.
+   * Reads text from the clipboard. Modern Safari uses its companion app; the
+   * legacy Safari port uses the host's clipboard API. Manifest v3 uses an
+   * offscreen document where supported, and other browsers use their clipboard API.
    *
    * @param options - Options for the clipboard operation.
    */
   async readFromClipboard(options?: ClipboardOptions): Promise<string> {
     const windowContext = options?.window || (this.globalContext as Window);
 
-    // See copyToClipboard: the legacy Safari port has no native companion app,
-    // so use the DOM clipboard instead of the native-messaging path.
-    if (this.isSafari() && !this.isSafariLegacy()) {
+    // The legacy port has no native companion app; its WebKit host exposes readText
+    // to extension pages without a user gesture or focus requirement.
+    if (this.isSafariLegacy()) {
+      return await safariLegacyClipboardService.read(windowContext);
+    }
+
+    if (this.isSafari()) {
       return await SafariApp.sendMessageToApp("readFromClipboard");
     }
 

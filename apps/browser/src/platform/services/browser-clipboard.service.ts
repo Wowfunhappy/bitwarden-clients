@@ -8,17 +8,9 @@ class BrowserClipboardService {
    *
    * @param globalContext - The global window context.
    * @param text - The text to copy.
-   * @param options - Copy options. `preferLegacy` skips the asynchronous
-   *   Clipboard API and copies synchronously via `execCommand`. This is required
-   *   on hosts where the Clipboard API is present but unusable from the calling
-   *   context (e.g. the legacy Safari extension popover): the async API loses the
-   *   user gesture on failure, whereas the synchronous path keeps it.
    */
-  static async copy(globalContext: Window, text: string, options?: { preferLegacy?: boolean }) {
-    if (
-      options?.preferLegacy ||
-      !BrowserClipboardService.isClipboardApiSupported(globalContext, "writeText")
-    ) {
+  static async copy(globalContext: Window, text: string) {
+    if (!BrowserClipboardService.isClipboardApiSupported(globalContext, "writeText")) {
       this.useLegacyCopyMethod(globalContext, text);
       return;
     }

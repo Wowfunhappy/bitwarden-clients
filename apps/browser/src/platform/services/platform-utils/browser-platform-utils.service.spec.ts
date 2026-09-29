@@ -29,6 +29,18 @@ class TestBrowserPlatformUtilsService extends BrowserPlatformUtilsService {
   }
 }
 
+function mockNavigatorClipboard(clipboard: Partial<Clipboard>): () => void {
+  const original = Object.getOwnPropertyDescriptor(window.navigator, "clipboard");
+  Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: clipboard });
+  return () => {
+    if (original) {
+      Object.defineProperty(window.navigator, "clipboard", original);
+    } else {
+      delete (window.navigator as any).clipboard;
+    }
+  };
+}
+
 describe("Browser Utils Service", () => {
   let browserPlatformUtilsService: BrowserPlatformUtilsService;
   let offscreenDocumentService: MockProxy<OffscreenDocumentService>;
@@ -202,8 +214,10 @@ describe("Browser Utils Service", () => {
       expect(triggerOffscreenCopyToClipboardSpy).not.toHaveBeenCalled();
     });
 
-    it("copies using the BrowserClipboardService on the legacy Safari port, which has no native app", async () => {
+    it("uses the host clipboard API on the legacy Safari port", async () => {
       const text = "test";
+      const writeText = jest.fn().mockResolvedValue(undefined);
+      const restoreClipboard = mockNavigatorClipboard({ writeText });
       jest
         .spyOn(browserPlatformUtilsService, "getDevice")
         .mockReturnValue(DeviceType.SafariExtension);
@@ -214,9 +228,12 @@ describe("Browser Utils Service", () => {
         browserPlatformUtilsService.copyToClipboard(text, { window: self });
         await flushPromises();
 
-        expect(clipboardServiceCopySpy).toHaveBeenCalledWith(self, text, { preferLegacy: true });
+        expect(writeText).toHaveBeenCalledWith(text);
+        expect(clipboardWriteCallbackSpy).toHaveBeenCalledWith(text, null);
+        expect(clipboardServiceCopySpy).not.toHaveBeenCalled();
         expect(sendMessageToAppSpy).not.toHaveBeenCalled();
       } finally {
+        restoreClipboard();
         delete chromeMock.__bitwardenSafariLegacy;
       }
     });
@@ -307,21 +324,24 @@ describe("Browser Utils Service", () => {
       expect(result).toBe("test");
     });
 
-    it("reads using the BrowserClipboardService on the legacy Safari port, which has no native app", async () => {
+    it("reads using the host clipboard API on the legacy Safari port", async () => {
+      const readText = jest.fn().mockResolvedValue("test");
+      const restoreClipboard = mockNavigatorClipboard({ readText });
       jest
         .spyOn(browserPlatformUtilsService, "getDevice")
         .mockReturnValue(DeviceType.SafariExtension);
-      clipboardServiceReadSpy.mockResolvedValueOnce("test");
       const chromeMock = ((window as any).chrome ??= {});
       chromeMock.__bitwardenSafariLegacy = true;
 
       try {
         const result = await browserPlatformUtilsService.readFromClipboard({ window: self });
 
-        expect(clipboardServiceReadSpy).toHaveBeenCalledWith(self);
+        expect(readText).toHaveBeenCalled();
+        expect(clipboardServiceReadSpy).not.toHaveBeenCalled();
         expect(sendMessageToAppSpy).not.toHaveBeenCalled();
         expect(result).toBe("test");
       } finally {
+        restoreClipboard();
         delete chromeMock.__bitwardenSafariLegacy;
       }
     });
