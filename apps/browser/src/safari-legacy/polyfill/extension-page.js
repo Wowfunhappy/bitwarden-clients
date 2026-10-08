@@ -45,15 +45,9 @@
     true,
   );
 
-  // UI adjustments for the legacy runtime, applied continuously since the popup is a
-  // single-page app that re-renders routes. The illustrations that stock CSS supplies
-  // via content:url() on <img> are hidden and the popout button is made invisible
-  // (visibility:hidden, so its box keeps holding the header layout together) by rules
-  // the packaging step appends to popup/main.css — extension pages cannot run in
-  // browser tabs (the web process has no globalPage access), so internally-opened
-  // popouts are hosted in the toolbar popover instead. Here: hide the context menu
-  // setting, because context menu support is omitted from this port (legacy Safari
-  // menus cannot express the nested menu tree).
+  // The packaging step fixes CSS image MIME types and hides the popout button:
+  // Bitwarden pages need direct globalPage access and use the toolbar host.
+  // Hide the context-menu setting here because this port omits nested menus.
   // Record which tab/URL this page booted against. The persistent popover only
   // shows correct per-tab content for the tab it booted on (the app assumes
   // Chrome's fresh-page-per-open popup lifecycle), so the background reloads it on

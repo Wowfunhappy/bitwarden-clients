@@ -35,6 +35,11 @@ The unpacked extension is written to
 folder (no zip) so it can be reloaded directly from disk in the extension host.
 A production build takes a few minutes; ccache-free first builds are slower.
 
+Packaging keeps the manifest version as the display version and sets Safari’s
+`CFBundleVersion` to the current Unix timestamp in seconds, so port updates can
+keep the same display version. Build the signed `.safariextz` from this folder
+in Safari Extension Builder; signing uses the generated version numbers.
+
 If webpack fails with `error:0308010C:digital envelope routines::unsupported`
 on a newer Node, prepend `NODE_OPTIONS=--openssl-legacy-provider` to the build
 command.
@@ -74,7 +79,9 @@ top of Safari's legacy extension objects:
 `package-safari-legacy.js` copies the webpack build, injects the bridge scripts
 into each HTML page (`hosted-page.js` for the pages it lists as web-page-hosted,
 `extension-page.js` for the rest), writes `Info.plist`, copies toolbar icons, and
-appends a small CSS fixup.
+embeds local SVG images in stylesheets with an explicit `image/svg+xml` type, and
+appends a small CSS fixup. SVG artwork, backgrounds and masks otherwise arrive
+from Safari's bundle loader as `text/xml`.
 
 ### What works
 
@@ -110,8 +117,17 @@ extension scheme as a secure context. Upstream Permissions-Policy and
 - **Inline autofill menu** — available, including its Autofill settings controls;
   rendering and positioning depend on the capabilities of the backported WebKit host.
 - **Popout windows** — hosted in the toolbar popover, not standalone windows.
+  Extension-page requests through `tabs.update` use the same host as `tabs.create`;
+  the original website tab stays open. This avoids Safari's URL setter lowercasing
+  the case-sensitive extension identifier and preserves direct background access.
 - Native messaging, request-body/HTTP-auth observation, and browser
   privacy-setting control degrade to safe no-ops (the host never exposed them).
 
 The generated extension is unsigned; the extension host applies its own
 certificate before loading.
+
+Targeted legacy bridge and asset-packaging checks can be run without rebuilding:
+
+```sh
+node --test apps/browser/scripts/safari-legacy.test.js
+```

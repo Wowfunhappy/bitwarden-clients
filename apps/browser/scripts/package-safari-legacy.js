@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const { inlineBundleSvgCss } = require("./safari-legacy-assets");
 
 const root = path.resolve(__dirname, "..");
 const build = path.join(root, "build");
@@ -58,17 +59,13 @@ function injectBridge(directory) {
   });
 }
 injectBridge(extension);
+inlineBundleSvgCss(extension);
 
-// Legacy-runtime UI fixes. The decorative illustrations (empty-state artwork, 2FA
-// provider logos) are supplied by CSS content:url() on <img>, which does not render
-// in this environment; hide them outright — the surrounding text carries the
-// meaning. The popout button is hidden because extension pages cannot run in
-// browser tabs (the web process has no globalPage access); internally-opened
-// popouts are hosted in the toolbar popover by the background bridge instead.
+// Keep popouts in the toolbar host: Bitwarden still needs direct globalPage
+// access. CSS artwork now has the correct SVG MIME type, so it can stay visible.
 const cssFixMarker = "/* safari-legacy ui fixes */";
 const cssFix = [
   cssFixMarker,
-  '.no-items .no-items-image,.full-loading-spinner .no-items-image,img[class^="mfaType"]{display:none!important}',
   // visibility (not display) so the button's box keeps holding its layout slot and
   // neighboring elements (the search field) keep their original inset.
   "app-pop-out{visibility:hidden!important}",
@@ -88,6 +85,8 @@ function xml(value) {
   return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 const version = xml(manifest.version);
+// Safari compares the bundle version for updates; keep the display version upstream-aligned.
+const buildNumber = Math.floor(Date.now() / 1000);
 const info = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -98,7 +97,7 @@ const info = `<?xml version="1.0" encoding="UTF-8"?>
   <key>CFBundleIdentifier</key><string>com.bitwarden.safari</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
-  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${buildNumber}</string>
   <key>Chrome</key>
   <dict>
     <key>Database Quota</key><integer>104857600</integer>
@@ -128,7 +127,8 @@ const info = `<?xml version="1.0" encoding="UTF-8"?>
     <key>Stylesheets</key><array><string>content/autofill.css</string></array>
   </dict>
   <key>Description</key><string>A secure and free password manager for all of your devices.</string>
-  <key>DeveloperIdentifier</key><string>LTZ2PFU5D6</string>
+  <key>DeveloperIdentifier</key><string>U5LEPOL722</string>
+  <key>Update Manifest URL</key><string>https://mavericksforever.com/safari-extensions-gallery/updates.plist</string>
   <key>ExtensionInfoDictionaryVersion</key><string>1.0</string>
   <key>Permissions</key><dict><key>Website Access</key><dict>
     <key>Include Secure Pages</key><true/>

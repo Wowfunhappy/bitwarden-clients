@@ -599,7 +599,14 @@
         }
         var t = findTab(id);
         if (t) {
-          if (p.url) t.url = resolveUrl(p.url);
+          var u = p.url && resolveUrl(p.url);
+          if (u && u.indexOf(base) === 0) {
+            // Keep extension UI in the host process, just as tabs.create does.
+            // Safari's tab setter also lowercases the case-sensitive identifier.
+            if (p.active || p.highlighted) t.activate();
+            return chrome.tabs.create({ url: u }, cb);
+          }
+          if (u) t.url = u;
           if (p.active || p.highlighted) t.activate();
         }
         return done(cb, tab(t));
