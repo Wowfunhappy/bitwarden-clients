@@ -16,7 +16,7 @@
     // The legacy extension resource loader rejects manifest.json in some WebKit
     // builds. The application only consumes these three fields, which are versioned
     // alongside the equivalent content-script fallback and the packaged manifest.
-    manifest = { manifest_version: 2, name: "Bitwarden", version: "2024.11.2-a" };
+    manifest = { manifest_version: 2, name: "Bitwarden", version: "2024.11.2-b" };
 
   function read(path) {
     try {
@@ -481,7 +481,15 @@
           function () {},
         );
       },
-      sendNativeMessage: function (_, __, cb) {
+      sendNativeMessage: function (_, message, cb) {
+        // Safari's vault-timeout loop paces itself on the native handler holding "sleep" for 10 s.
+        if (message && message.command === "sleep")
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              if (typeof cb === "function") cb(null);
+              resolve(null);
+            }, 10000);
+          });
         return done(cb, null);
       },
       reload: function () {

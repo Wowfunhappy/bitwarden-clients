@@ -10,6 +10,7 @@ const { inlineSvgCss } = require("./safari-legacy-assets");
 function bridge() {
   const base = "safari-extension://com.bitwarden.safari-TEAM123/Session/";
   const assignments = [];
+  const delayed = [];
   const window = { tabs: [] };
   function makeTab() {
     const tab = {
@@ -68,6 +69,7 @@ function bridge() {
     console,
     setTimeout(fn, delay) {
       if (!delay) return setTimeout(fn, delay);
+      delayed.push({ fn, delay });
     },
     clearTimeout,
     setInterval() {},
@@ -80,7 +82,7 @@ function bridge() {
     ),
     context,
   );
-  return { chrome: context.chrome, window, popover, assignments, base };
+  return { chrome: context.chrome, window, popover, assignments, base, delayed };
 }
 
 test("tabs.update hosts extension UI in the popover and leaves the website intact", async () => {
@@ -143,6 +145,33 @@ function fixture(t) {
   fs.writeFileSync(path.join(root, "images/test icon.svg"), svg);
   return { root, svg, css: path.join(root, "css/main.css") };
 }
+
+test("sendNativeMessage holds sleep as the native handler does and answers the rest at once", async () => {
+  const h = bridge();
+  const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+  let slept = 0;
+  const sleeping = h.chrome.runtime.sendNativeMessage(
+    "com.bitwarden.desktop",
+    { id: "1", command: "sleep" },
+    () => slept++,
+  );
+  await nextTask();
+  assert.equal(slept, 0);
+  const sleepTimers = h.delayed.filter((timer) => timer.delay === 10000);
+  assert.equal(sleepTimers.length, 1);
+  sleepTimers[0].fn();
+  await sleeping;
+  assert.equal(slept, 1);
+
+  let answered = 0;
+  await h.chrome.runtime.sendNativeMessage(
+    "com.bitwarden.desktop",
+    { id: "2", command: "biometricUnlock" },
+    () => answered++,
+  );
+  await nextTask();
+  assert.equal(answered, 1);
+});
 
 test("CSS SVGs retain their bytes, fragments and themes with an explicit MIME type", (t) => {
   const f = fixture(t);
